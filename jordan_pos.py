@@ -279,7 +279,7 @@ with tabs[1]:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# PESTAÑA 3: REPORTES (CORREGIDO PARA EVITAR KEYERROR)
+# PESTAÑA 3: REPORTES (CORREGIDO PARA ERROR DE COLUMNAS)
 # ==================================================
 with tabs[2]:
     if check_login("tab_almacen"):
@@ -293,7 +293,6 @@ with tabs[2]:
         st.write("---")
 
         if modo == "📉 Análisis de Rentabilidad":
-            # CORRECCIÓN: Pedimos TO-DO (*) para evitar errores de columnas faltantes
             res_ventas = supabase.table("ventas").select("*").execute()
             res_prod = supabase.table("productos").select("*").execute()
             
@@ -301,19 +300,24 @@ with tabs[2]:
                 df_ventas = pd.DataFrame(res_ventas.data)
                 df_prod = pd.DataFrame(res_prod.data)
                 
-                # FORZAMOS A TEXTO PARA QUE CRUCEN BIEN
+                # CORRECCIÓN KEYERROR: Estandarizamos tipos
                 df_ventas['producto_id'] = df_ventas['producto_id'].astype(str)
                 df_prod['codigo_barras'] = df_prod['codigo_barras'].astype(str)
 
-                # UNIMOS TABLAS
+                # UNIÓN Y CORRECCIÓN DE NOMBRES DUPLICADOS
+                # Si ambos tienen 'created_at', pandas crea _x y _y.
+                # Lo solucionamos renombrando después del merge
                 df_full = pd.merge(df_ventas, df_prod, left_on='producto_id', right_on='codigo_barras', how='left')
                 
-                # RELLENAMOS DATOS FALTANTES (POR SI SE BORRÓ EL PRODUCTO)
-                df_full['nombre'] = df_full['nombre'].fillna("Producto Eliminado")
-                df_full['costo_compra'] = df_full['costo_compra'].fillna(0)
+                # BUSCAMOS LA COLUMNA DE FECHA CORRECTA
+                # A veces se llama 'created_at', a veces 'created_at_x'
+                col_fecha = 'created_at'
+                if 'created_at_x' in df_full.columns:
+                    col_fecha = 'created_at_x'
+                elif 'created_at' not in df_full.columns and 'created_at_y' in df_full.columns:
+                    col_fecha = 'created_at_y'
                 
-                # CÁLCULOS
-                df_full['ganancia_real'] = df_full['precio_final_vendido'] - df_full['costo_compra']
+                df_full['ganancia_real'] = df_full['precio_final_vendido'] - df_full['costo_compra'].fillna(0)
                 
                 total_vendido = df_full['precio_final_vendido'].sum()
                 ganancia_total = df_full['ganancia_real'].sum()
@@ -324,10 +328,15 @@ with tabs[2]:
                 m3.metric("Transacciones", len(df_full))
                 
                 st.write("📜 **Detalle:**")
-                # Seleccionamos columnas seguras
-                df_show = df_full[['created_at', 'nombre', 'precio_final_vendido', 'ganancia_real']].copy()
-                df_show.columns = ['Fecha/Hora', 'Producto', 'Precio Venta', 'Ganancia']
-                st.dataframe(df_show.sort_values('Fecha/Hora', ascending=False), use_container_width=True)
+                
+                # PREPARAMOS TABLA FINAL SEGURA
+                df_show = pd.DataFrame()
+                df_show['Fecha'] = df_full[col_fecha]
+                df_show['Producto'] = df_full['nombre'].fillna("Producto Borrado")
+                df_show['Precio Venta'] = df_full['precio_final_vendido']
+                df_show['Ganancia'] = df_full['ganancia_real']
+                
+                st.dataframe(df_show.sort_values('Fecha', ascending=False), use_container_width=True)
             else:
                 st.info("No hay datos suficientes para el reporte.")
 

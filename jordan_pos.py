@@ -41,14 +41,12 @@ if 'input_v' not in st.session_state: st.session_state.input_v = ""
 if 'scan_agregar' not in st.session_state: st.session_state.scan_agregar = ""
 if 'mensaje_exito' not in st.session_state: st.session_state.mensaje_exito = False
 
-# --- 4. FUNCIONES DE LÓGICA ---
-
+# --- 4. FUNCIONES ---
 def procesar_imagen_avanzado(uploaded_file):
     if uploaded_file is None: return None
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img_original = cv2.imdecode(file_bytes, 1)
     
-    # Zoom Digital
     h, w, _ = img_original.shape
     start_row, start_col = int(h * 0.25), int(w * 0.25)
     end_row, end_col = int(h * 0.75), int(w * 0.75)
@@ -63,10 +61,8 @@ def procesar_imagen_avanzado(uploaded_file):
         except: continue
     return None
 
-# --- NUEVA FUNCIÓN (CALLBACK) PARA VENDER SIN ERROR ---
-def ejecutar_venta(codigo, precio, stock_actual, costo):
+def ejecutar_venta(codigo, precio, stock_actual):
     try:
-        # 1. Guardar Venta (Sin la columna ganancia_neta para evitar error)
         datos_venta = {
             "producto_id": codigo, 
             "precio_final_vendido": precio,
@@ -74,13 +70,11 @@ def ejecutar_venta(codigo, precio, stock_actual, costo):
         }
         supabase.table("ventas").insert(datos_venta).execute()
         
-        # 2. Bajar Stock
         nuevo_stock = int(stock_actual) - 1
         supabase.table("productos").update({"stock_actual": nuevo_stock}).eq("codigo_barras", codigo).execute()
         
-        # 3. Limpiar pantalla (Esto ahora funciona porque estamos en un callback)
         st.session_state.input_v = ""
-        st.session_state.mensaje_exito = True # Activamos el mensaje para después
+        st.session_state.mensaje_exito = True
         
     except Exception as e:
         st.error(f"Error al guardar: {e}")
@@ -107,23 +101,20 @@ def check_login(clave_unica):
 
 st.title("📱 Accesorios Jordan")
 
-# --- MENÚ PRINCIPAL ---
 tabs = st.tabs(["🛒 VENDER", "➕ AGREGAR", "📊 ALMACÉN"])
 
 # ==================================================
-# PESTAÑA 1: VENDER (SOLUCIONADO)
+# PESTAÑA 1: VENDER
 # ==================================================
 with tabs[0]:
     st.markdown('<div class="css-card">', unsafe_allow_html=True)
     st.subheader("Punto de Venta")
     
-    # MENSAJE DE ÉXITO (Se muestra aquí al reiniciar)
     if st.session_state.mensaje_exito:
         st.balloons()
         st.success("✅ ¡Venta Realizada con Éxito!")
-        st.session_state.mensaje_exito = False # Apagar mensaje
+        st.session_state.mensaje_exito = False
 
-    # 1. ESCÁNER
     with st.expander("📷 ABRIR ESCÁNER", expanded=True):
         img_v = st.camera_input("Toma la foto", key="cam_venta")
         if img_v:
@@ -133,16 +124,14 @@ with tabs[0]:
                     st.session_state.input_v = code 
                     st.rerun()
                 else:
-                    st.warning("⚠️ No se detectó. Intenta de nuevo.")
+                    st.warning("⚠️ No se detectó.")
 
-    # 2. CÓDIGO
     cod_input = st.text_input("Código de Barras", key="input_v")
 
     if st.button("🧹 Limpiar"):
         st.session_state.input_v = ""
         st.rerun()
 
-    # 3. PROCESO DE VENTA
     if cod_input:
         cod_limpio = cod_input.strip()
         res = supabase.table("productos").select("*").eq("codigo_barras", cod_limpio).execute()
@@ -151,28 +140,18 @@ with tabs[0]:
             p = res.data[0]
             st.success("✅ ENCONTRADO")
             st.info(f"📦 **{p['nombre']}**")
-            
             st.markdown(f"### Precio: S/. {p['precio_lista']}")
             p_final = st.number_input("Precio Final S/.", value=float(p['precio_lista']), step=0.5)
             
-            # --- BOTÓN CON CALLBACK (LA SOLUCIÓN) ---
             st.markdown('<span class="btn-verde">', unsafe_allow_html=True)
-            
-            # En lugar de poner la lógica dentro del if, la pasamos a la función 'on_click'
-            st.button(
-                "✅ CONFIRMAR VENTA", 
-                on_click=ejecutar_venta,
-                args=(cod_limpio, p_final, p['stock_actual'], p['costo_compra'])
-            )
+            st.button("✅ CONFIRMAR VENTA", on_click=ejecutar_venta, args=(cod_limpio, p_final, p['stock_actual']))
             st.markdown('</span>', unsafe_allow_html=True)
-            
         else:
             st.warning(f"El código {cod_limpio} no existe.")
-            
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# PESTAÑA 2: AGREGAR
+# PESTAÑA 2: AGREGAR (CORREGIDA LA SINCRONIZACIÓN)
 # ==================================================
 with tabs[1]:
     if check_login("tab_agregar"):
@@ -188,13 +167,15 @@ with tabs[1]:
             if img_a:
                 code_a = procesar_imagen_avanzado(img_a)
                 if code_a:
+                    # AQUÍ ESTÁ EL TRUCO: Guardamos directo en la memoria y recargamos
                     st.session_state.scan_agregar = code_a
                     st.success("¡Capturado!")
                     st.rerun()
 
         with st.form("form_add"):
-            val = st.session_state.scan_agregar if st.session_state.scan_agregar else ""
-            c_barras = st.text_input("Código", value=val) 
+            # IMPORTANTE: Usamos 'key' para conectar directo a la memoria
+            # Ya no usamos 'value=', la key hace el trabajo sucio
+            c_barras = st.text_input("Código", key="scan_agregar") 
             nombre = st.text_input("Nombre del Producto")
             
             c1, c2 = st.columns(2)
@@ -215,6 +196,7 @@ with tabs[1]:
                             "precio_lista": p_venta, "precio_minimo": p_min, "stock_actual": stock
                         }).execute()
                         st.success(f"✅ {nombre} agregado.")
+                        # Limpiamos la memoria tras guardar
                         st.session_state.scan_agregar = ""
                         time.sleep(1.5)
                         st.rerun()
@@ -224,6 +206,12 @@ with tabs[1]:
                         else: st.error(f"Error: {e}")
                 else: st.warning("Falta nombre o código.")
             st.markdown('</span>', unsafe_allow_html=True)
+        
+        # Botón extra para limpiar manual
+        if st.button("🧹 Limpiar Formulario"):
+            st.session_state.scan_agregar = ""
+            st.rerun()
+            
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================

@@ -24,14 +24,13 @@ st.markdown("""
     .stApp { background-color: #f1f5f9; }
     .main-header { font-size: 26px; font-weight: 800; color: #1e3a8a; text-align: center; padding: 15px; border-bottom: 4px solid #1e3a8a; margin-bottom: 20px; }
     .css-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 5px solid #2563eb; margin-bottom: 15px; }
-    .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #333; width: 100%; max-width: 300px; margin: 0 auto; line-height: 1.2; font-size: 14px; }
+    .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #333; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2; font-size: 14px; }
     .stButton>button { border-radius: 6px; font-weight: bold; height: 3.5em; width: 100%; }
     .resumen-duplicado { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 4. MEMORIA DEL SISTEMA (STATE) ---
-# Separamos las variables inyectadas de las llaves (keys) de los widgets para evitar el error rojo
 keys_to_init = {
     'carrito': [], 'last_ticket': None,
     'iny_alm_cod': "", 'iny_dev_cod': "", 'iny_merma_cod': "",
@@ -40,14 +39,13 @@ keys_to_init = {
 for k, v in keys_to_init.items():
     if k not in st.session_state: st.session_state[k] = v
 
-# --- 5. FUNCIONES DE APOYO (CÁMARA "OJO DE HALCÓN") ---
+# --- 5. FUNCIONES DE APOYO ---
 def scan_pos(image):
     if not image: return None
     try:
         file_bytes = np.asarray(bytearray(image.read()), dtype=np.uint8)
         img = cv2.imdecode(file_bytes, 1)
         
-        # Arsenal de procesamiento de imagen
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
         enh = clahe.apply(gray)
@@ -55,7 +53,6 @@ def scan_pos(image):
         scale_down = cv2.resize(gray, None, fx=0.6, fy=0.6, interpolation=cv2.INTER_AREA)
         scale_up = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
         
-        # Prueba 6 versiones de la imagen con 3 rotaciones = 18 intentos agresivos
         variantes = [img, gray, enh, thresh, scale_down, scale_up]
         for var in variantes:
             for rot in [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
@@ -63,8 +60,7 @@ def scan_pos(image):
                 res = zxingcpp.read_barcodes(test_img)
                 if res: return res[0].text
         return None
-    except:
-        return None
+    except: return None
 
 def load_data(table):
     try:
@@ -72,46 +68,65 @@ def load_data(table):
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except: return pd.DataFrame()
 
+# NÚCLEO DE VENTAS: Función unificada para agregar al carrito (Cámara o Manual)
+def procesar_codigo_venta(code):
+    exito = False
+    try:
+        prod_db = supabase.table("productos").select("*").eq("codigo_barras", code).execute()
+        if prod_db.data:
+            p = prod_db.data[0]
+            if p['stock_actual'] > 0:
+                exist = False
+                for item in st.session_state.carrito:
+                    if item['id'] == code: item['cant'] += 1; exist = True
+                if not exist:
+                    st.session_state.carrito.append({
+                        'id': code, 'nombre': p['nombre'], 
+                        'precio': float(p['precio_lista']), 
+                        'cant': 1, 'costo': float(p['costo_compra']),
+                        'p_min': float(p['precio_minimo'])
+                    })
+                st.success(f"Añadido: {p['nombre']}")
+                exito = True
+            else: st.error("❌ Sin stock disponible.")
+        else: st.warning("⚠️ Producto no encontrado.")
+    except Exception as e: st.error(ERROR_ADMIN)
+    return exito
+
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.2</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.4</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
 
 # ==========================================
-# 🛒 MÓDULO 1: VENTAS (POS)
+# 🛒 MÓDULO 1: VENTAS (CARRITO Y REGATEO)
 # ==========================================
 if menu == "🛒 VENTAS (POS)":
-    col_v1, col_v2 = st.columns([1.5, 1.2])
+    col_v1, col_v2 = st.columns([1.5, 1.4])
     with col_v1:
-        st.subheader("🔍 Escáner de Productos")
-        with st.expander("📷 ABRIR ESCÁNER", expanded=True):
+        st.subheader("🔍 Ingreso de Productos")
+        
+        # --- NUEVO: INGRESO MANUAL DE CÓDIGO DE BARRAS ---
+        with st.form("form_manual_barcode", clear_on_submit=True):
+            col_mb1, col_mb2 = st.columns([3, 1])
+            manual_code = col_mb1.text_input("Tipear Código Numérico (Plan B)")
+            add_manual = col_mb2.form_submit_button("➕ Agregar")
+            if add_manual and manual_code:
+                if procesar_codigo_venta(manual_code):
+                    time.sleep(0.5); st.rerun()
+
+        with st.expander("📷 ABRIR ESCÁNER TÁCTIL", expanded=False):
             img = st.camera_input("Lector", key=f"scanner_venta_{st.session_state.cam_v_key}", label_visibility="hidden")
             if img:
                 code = scan_pos(img)
                 if code:
-                    exito_cam = False
-                    try:
-                        prod_db = supabase.table("productos").select("*").eq("codigo_barras", code).execute()
-                        if prod_db.data:
-                            p = prod_db.data[0]
-                            if p['stock_actual'] > 0:
-                                exist = False
-                                for item in st.session_state.carrito:
-                                    if item['id'] == code: item['cant'] += 1; exist = True
-                                if not exist:
-                                    st.session_state.carrito.append({'id': code, 'nombre': p['nombre'], 'precio': float(p['precio_lista']), 'cant': 1})
-                                st.success(f"Añadido: {p['nombre']}")
-                                st.session_state.cam_v_key += 1 
-                                exito_cam = True
-                            else: st.error("❌ Sin stock disponible.")
-                        else: st.warning("⚠️ Producto no encontrado en el sistema.")
-                    except Exception as e: st.error(ERROR_ADMIN)
-                    
-                    if exito_cam: time.sleep(0.5); st.rerun()
-                else:
-                    st.error("⚠️ Foto muy borrosa o mal enfocada. Intenta darle más luz o acércate.")
+                    if procesar_codigo_venta(code):
+                        st.session_state.cam_v_key += 1 
+                        time.sleep(0.5); st.rerun()
+                else: st.error("⚠️ Foto muy borrosa. Intenta darle más luz.")
 
-        search = st.text_input("Búsqueda Manual (Ej. Mica S23)")
+        st.divider()
+        search = st.text_input("Búsqueda por Nombre (Ej. Mica S23)")
         if search:
             try:
                 res_s = supabase.table("productos").select("*, marcas(nombre)").ilike("nombre", f"%{search}%").execute()
@@ -122,79 +137,125 @@ if menu == "🛒 VENTAS (POS)":
                         c_p2.write(f"S/. {p['precio_lista']}")
                         if c_p3.button("➕", key=f"add_{p['codigo_barras']}"):
                             if p['stock_actual'] > 0:
-                                st.session_state.carrito.append({'id': p['codigo_barras'], 'nombre': p['nombre'], 'precio': float(p['precio_lista']), 'cant': 1})
+                                st.session_state.carrito.append({
+                                    'id': p['codigo_barras'], 'nombre': p['nombre'], 
+                                    'precio': float(p['precio_lista']), 'cant': 1,
+                                    'costo': float(p['costo_compra']), 'p_min': float(p['precio_minimo'])
+                                })
                                 st.rerun()
                             else: st.error("Sin stock")
-                else: st.info("No se encontraron productos con ese nombre.")
+                else: st.info("No se encontraron productos.")
             except Exception as e: st.error(ERROR_ADMIN)
 
     with col_v2:
-        st.subheader("🛍️ Carrito Actual")
+        st.subheader("🛍️ Carrito (Regateo y Cobro)")
         if not st.session_state.carrito: 
             st.info("🛒 Aún no se han agregado productos al carrito.")
         else:
-            total = 0
+            total_venta = 0
             for i, item in enumerate(st.session_state.carrito):
-                c_c1, c_c2, c_c3 = st.columns([3, 1, 0.7])
-                c_c1.write(f"**{item['cant']}x** {item['nombre']}")
-                c_c2.write(f"S/. {item['precio']*item['cant']:.2f}")
+                st.write(f"**{item['cant']}x** {item['nombre']} (Mín: S/. {item['p_min']:.2f})")
+                c_c1, c_c2, c_c3 = st.columns([2, 1.5, 0.7])
+                
+                nuevo_precio = c_c1.number_input("Precio final (S/.)", min_value=float(item['p_min']), value=float(item['precio']), step=1.0, key=f"precio_{i}")
+                st.session_state.carrito[i]['precio'] = nuevo_precio
+                
+                subtotal = nuevo_precio * item['cant']
+                c_c2.markdown(f"<div style='padding-top:30px;'><b>Sub: S/. {subtotal:.2f}</b></div>", unsafe_allow_html=True)
+                
                 if c_c3.button("❌", key=f"del_{i}"): st.session_state.carrito.pop(i); st.rerun()
-                total += item['precio'] * item['cant']
+                total_venta += subtotal
             
             st.divider()
-            st.markdown(f"<h2 style='color:#16a34a; text-align:center;'>TOTAL: S/. {total:.2f}</h2>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='color:#16a34a; text-align:center;'>TOTAL: S/. {total_venta:.2f}</h2>", unsafe_allow_html=True)
             pago = st.selectbox("Medio de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
-            doc = st.selectbox("Comprobante", ["Ticket Interno", "Boleta Electrónica"])
+            doc = st.selectbox("Comprobante a emitir", ["Ticket Interno", "Boleta Electrónica"])
             
             if st.button("🏁 PROCESAR PAGO", type="primary"):
                 exito_pago = False
                 try:
                     t_num = f"AJ-{int(time.time())}"
-                    res_cab = supabase.table("ventas_cabecera").insert({"ticket_numero": t_num, "total_venta": total, "metodo_pago": pago, "tipo_comprobante": doc}).execute()
+                    res_cab = supabase.table("ventas_cabecera").insert({"ticket_numero": t_num, "total_venta": total_venta, "metodo_pago": pago, "tipo_comprobante": doc}).execute()
                     v_id = res_cab.data[0]['id']
                     
                     for item in st.session_state.carrito:
-                        supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": item['id'], "cantidad": item['cant'], "precio_unitario": item['precio'], "subtotal": item['precio'] * item['cant']}).execute()
+                        supabase.table("ventas_detalle").insert({
+                            "venta_id": v_id, "producto_id": item['id'], "cantidad": item['cant'], 
+                            "precio_unitario": item['precio'], "subtotal": item['precio'] * item['cant']
+                        }).execute()
                         stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", item['id']).execute()
                         supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - item['cant']}).eq("codigo_barras", item['id']).execute()
                     
-                    st.session_state.last_ticket = {'num': t_num, 'items': st.session_state.carrito.copy(), 'total': total, 'pago': pago, 'doc': doc}
+                    st.session_state.last_ticket = {'num': t_num, 'items': st.session_state.carrito.copy(), 'total': total_venta, 'pago': pago, 'doc': doc}
                     st.session_state.carrito = []
                     exito_pago = True
                 except Exception as e: st.error(ERROR_ADMIN)
-                
                 if exito_pago: st.rerun() 
         
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
                 st.success("✅ Venta procesada correctamente.")
-                st.markdown(f"""
-                <div class="ticket-termico">
-                    <center><b>ACCESORIOS JORDAN</b></center>
-                    <center>{tk['doc']}</center>
-                    --------------------------------<br>
-                    TICKET: {tk['num']}<br>
-                    FECHA: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
-                    --------------------------------<br>
-                """, unsafe_allow_html=True)
-                for it in tk['items']:
-                    st.write(f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x {it['precio']:.2f} = {it['precio']*it['cant']:>6.2f}", unsafe_allow_html=True)
-                st.markdown(f"""
-                    --------------------------------<br>
-                    <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
-                    MÉTODO: {tk['pago']}<br>
-                    --------------------------------<br>
-                    <center>¡Gracias por su compra!</center>
-                </div>
-                """, unsafe_allow_html=True)
+                
+                if tk['doc'] == "Ticket Interno":
+                    st.markdown(f"""
+                    <div class="ticket-termico">
+                        <center><b>ACCESORIOS JORDAN (CONTROL)</b></center>
+                        <center>{tk['doc']}</center>
+                        --------------------------------<br>
+                        TICKET: {tk['num']}<br>
+                        FECHA: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
+                        --------------------------------<br>
+                        <b>RESUMEN DE UTILIDADES:</b><br>
+                    """, unsafe_allow_html=True)
+                    
+                    total_costo = 0
+                    for it in tk['items']:
+                        costo_sub = it['costo'] * it['cant']
+                        venta_sub = it['precio'] * it['cant']
+                        utilidad = venta_sub - costo_sub
+                        total_costo += costo_sub
+                        
+                        st.write(f"<b>{it['nombre'][:20]}</b> (x{it['cant']})<br> Costo: S/. {costo_sub:.2f} | Venta: S/. {venta_sub:.2f} <br> <span style='color:green'>Ganancia: S/. {utilidad:.2f}</span>", unsafe_allow_html=True)
+                    
+                    ganancia_total = tk['total'] - total_costo
+                    st.markdown(f"""
+                        --------------------------------<br>
+                        <b>VENTA TOTAL: S/. {tk['total']:.2f}</b><br>
+                        COSTO INVERSIÓN: S/. {total_costo:.2f}<br>
+                        <b>UTILIDAD NETA: S/. {ganancia_total:.2f}</b><br>
+                        MÉTODO: {tk['pago']}<br>
+                        --------------------------------<br>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                else:
+                    st.markdown(f"""
+                    <div class="ticket-termico">
+                        <center><b>ACCESORIOS JORDAN</b></center>
+                        <center>{tk['doc']}</center>
+                        --------------------------------<br>
+                        TICKET: {tk['num']}<br>
+                        FECHA: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
+                        --------------------------------<br>
+                    """, unsafe_allow_html=True)
+                    for it in tk['items']:
+                        st.write(f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}", unsafe_allow_html=True)
+                    st.markdown(f"""
+                        --------------------------------<br>
+                        <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
+                        MÉTODO: {tk['pago']}<br>
+                        --------------------------------<br>
+                        <center>¡Gracias por su compra!</center>
+                    </div>
+                    """, unsafe_allow_html=True)
 
 # ==========================================
 # 📦 MÓDULO 2: ALMACÉN PRO
 # ==========================================
 elif menu == "📦 ALMACÉN PRO":
     st.subheader("Gestión de Inventario")
-    t1, t2, t3 = st.tabs(["➕ Ingresar Mercadería", "⚙️ Configurar Listas", "📋 Inventario y Reabastecimiento"])
+    t1, t2, t3 = st.tabs(["➕ Ingresar Mercadería", "⚙️ Configurar Listas", "📋 Inventario General"])
     
     with t1:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -204,7 +265,6 @@ elif menu == "📦 ALMACÉN PRO":
                 code_a = scan_pos(img_a)
                 if code_a: 
                     try:
-                        # Verificación de Duplicados al instante
                         check = supabase.table("productos").select("*, categorias(nombre), marcas(nombre)").eq("codigo_barras", code_a).execute()
                         if check.data:
                             p_ex = check.data[0]
@@ -215,24 +275,22 @@ elif menu == "📦 ALMACÉN PRO":
                                 <b>⚠️ ESTE PRODUCTO YA EXISTE</b><br>
                                 <b>Nombre:</b> {p_ex['nombre']} | <b>Marca:</b> {m_nom} | <b>Categoría:</b> {c_nom}<br>
                                 <b>Stock:</b> {p_ex['stock_actual']} ud. | <b>Precio:</b> S/. {p_ex['precio_lista']}<br>
-                                <i>👉 Ve a 'Inventario y Reabastecimiento' para sumarle más cantidad.</i>
+                                <i>👉 Ve a 'Inventario General' para sumarle más cantidad.</i>
                             </div>
                             """, unsafe_allow_html=True)
                             st.session_state.cam_a_key += 1 
                         else:
-                            st.session_state.iny_alm_cod = code_a # Inyección limpia
+                            st.session_state.iny_alm_cod = code_a 
                             st.session_state.cam_a_key += 1 
                             st.success(f"¡Código capturado con éxito: {code_a}!")
                             time.sleep(1); st.rerun() 
                     except Exception as e: st.error(ERROR_ADMIN)
-                else:
-                    st.error("⚠️ La foto está muy borrosa. Intenta darle más luz o enfocar mejor.")
+                else: st.error("⚠️ La foto está muy borrosa. Intenta darle más luz.")
         
         cats = load_data("categorias")
         mars = load_data("marcas")
         
         with st.form("form_nuevo", clear_on_submit=True):
-            # Usamos "value" alimentado por la inyección. SIN "key" rígido para evitar el error rojo.
             c_cod = st.text_input("Código de Barras", value=st.session_state.iny_alm_cod)
             c_nom = st.text_input("Nombre / Descripción del Accesorio")
             
@@ -246,8 +304,8 @@ elif menu == "📦 ALMACÉN PRO":
             
             f4, f5, f6, f7 = st.columns(4)
             f_costo = f4.number_input("Costo Compra (S/.)", min_value=0.0, step=0.5)
-            f_venta = f5.number_input("Precio Venta (S/.)", min_value=0.0, step=0.5)
             f_pmin = f6.number_input("Precio Mínimo (S/.)", min_value=0.0, step=0.5)
+            f_venta = f5.number_input("Precio Venta Sugerido (S/.)", min_value=0.0, step=0.5)
             f_stock = f7.number_input("Stock Inicial", min_value=1, step=1)
             
             if st.form_submit_button("🚀 GUARDAR EN INVENTARIO", type="primary"):
@@ -256,7 +314,7 @@ elif menu == "📦 ALMACÉN PRO":
                     try:
                         check_exist = supabase.table("productos").select("codigo_barras").eq("codigo_barras", c_cod).execute()
                         if check_exist.data:
-                            st.error("❌ Este código de barras ya existe en la base de datos.")
+                            st.error("❌ Este código ya existe en la base de datos.")
                         else:
                             cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
                             mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
@@ -267,7 +325,7 @@ elif menu == "📦 ALMACÉN PRO":
                                 "precio_minimo": f_pmin, "stock_actual": f_stock
                             }).execute()
                             
-                            st.session_state.iny_alm_cod = "" # Limpiamos memoria
+                            st.session_state.iny_alm_cod = "" 
                             exito_guardar = True
                     except Exception as e: st.error(ERROR_ADMIN)
                 else: 
@@ -328,14 +386,15 @@ elif menu == "📦 ALMACÉN PRO":
             st.markdown('</div>', unsafe_allow_html=True)
 
     with t3:
-        st.write("### 📋 Inventario General")
+        st.write("### 📋 Visor Transparente de Inventario")
         try:
             prods = supabase.table("productos").select("*, categorias(nombre), marcas(nombre)").execute()
             if prods.data: 
                 df = pd.DataFrame(prods.data)
                 df['Categoría'] = df['categorias'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
                 df['Marca'] = df['marcas'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
-                df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'calidad', 'stock_actual', 'precio_lista', 'precio_minimo']]
+                df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'stock_actual', 'costo_compra', 'precio_minimo', 'precio_lista']]
+                df_show.columns = ['Código', 'Nombre', 'Categoría', 'Marca', 'Stock', 'Costo Compra (S/.)', 'Precio Mínimo (S/.)', 'Precio Sugerido (S/.)']
                 st.dataframe(df_show, use_container_width=True)
                 
                 st.divider()
@@ -380,7 +439,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 st.rerun()
             else: st.warning("⚠️ No se detectó código. Intenta enfocar mejor.")
 
-    tick = st.text_input("Ingresa el Número de Ticket o Código", value=st.session_state.iny_dev_cod)
+    tick = st.text_input("Ingresa el Número de Ticket o Código de Producto", value=st.session_state.iny_dev_cod)
     if tick:
         try:
             v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", tick).execute()

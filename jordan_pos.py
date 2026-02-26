@@ -65,6 +65,7 @@ for key, value in keys_to_init.items():
 # 4. FUNCIONES DE APOYO Y MOTOR PRINCIPAL
 # ==========================================
 
+# Obtener fecha del último cierre de caja para filtrar historiales
 def get_last_cierre_dt():
     try:
         cierres_db = supabase.table("cierres_caja").select("fecha_cierre").order("fecha_cierre", desc=True).limit(1).execute()
@@ -74,6 +75,7 @@ def get_last_cierre_dt():
         pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True)
 
+# Cámara Ojo de Halcón (Procesamiento agresivo para códigos difíciles)
 def scan_pos(image):
     if not image: return None
     try:
@@ -129,7 +131,7 @@ def procesar_codigo_venta(code):
 # ==========================================
 # 5. ESTRUCTURA DE LA PÁGINA Y MENÚ
 # ==========================================
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.7</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.8</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("### 🏢 Panel de Control")
 
@@ -358,7 +360,6 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
             cats_df = load_data("categorias")
             if not cats_df.empty:
                 del_c = st.selectbox("Eliminar Categoría", ["..."] + cats_df['nombre'].tolist())
-                # BOTÓN CORREGIDO CON KEY ÚNICO
                 if st.button("🗑️ Borrar Categoría", key="btn_del_cat"):
                     if del_c != "...": 
                         try: supabase.table("categorias").delete().eq("nombre", del_c).execute(); st.rerun()
@@ -378,7 +379,6 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
             mars_df = load_data("marcas")
             if not mars_df.empty:
                 del_m = st.selectbox("Eliminar Marca", ["..."] + mars_df['nombre'].tolist())
-                # BOTÓN CORREGIDO CON KEY ÚNICO
                 if st.button("🗑️ Borrar Marca", key="btn_del_mar"):
                     if del_m != "...": 
                         try: supabase.table("marcas").delete().eq("nombre", del_m).execute(); st.rerun()
@@ -558,11 +558,11 @@ elif menu == "⚠️ MERMAS/DAÑOS":
             p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", m_cod).execute()
             if p_inf.data:
                 p_merma = p_inf.data[0]
-                st.markdown(f"<div class='info-caja'>🛑 <b>A PUNTO DE DAR DE BAJA:</b> {p_merma['nombre']}<br>Tienes <b>{p_merma['stock_actual']}</b> unidades en tienda.<br>Cada unidad dañada te cuesta <b>S/. {p_merma['costo_compra']}</b> de capital.</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='info-caja'>🛑 <b>A PUNTO DE DAR DE BAJA:</b> {p_merma['nombre']}<br>Stock actual: <b>{p_merma['stock_actual']}</b> ud.<br>Pérdida por unidad: <b>S/. {p_merma['costo_compra']}</b></div>", unsafe_allow_html=True)
                 with st.form("form_merma", clear_on_submit=True):
-                    m_cant = st.number_input("Cantidad a descontar y botar a la basura", min_value=1, max_value=int(p_merma['stock_actual']) if p_merma['stock_actual'] > 0 else 1)
+                    m_cant = st.number_input("Cantidad a botar a la basura", min_value=1, max_value=int(p_merma['stock_actual']) if p_merma['stock_actual'] > 0 else 1)
                     m_mot = st.selectbox("Motivo Exacto", ["Roto al instalar/mostrar", "Falla de Fábrica (Garantía Proveedor)", "Robo/Extravío"])
-                    if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA Y DESCONTAR", type="primary"):
+                    if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA", type="primary"):
                         exito_merma = False
                         if p_merma['stock_actual'] >= m_cant:
                             try:
@@ -571,9 +571,9 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                                 st.session_state.iny_merma_cod = "" 
                                 exito_merma = True
                             except: st.error(ERROR_ADMIN)
-                        else: st.error("❌ No puedes dar de baja más stock del que tienes.")
-                        if exito_merma: st.success(f"✅ Baja exitosa. Se descontaron {m_cant} unidades de tu inventario."); time.sleep(1.5); st.rerun()
-            else: st.warning("⚠️ Código de producto no encontrado en el sistema.")
+                        else: st.error("❌ No tienes stock suficiente.")
+                        if exito_merma: st.success("✅ Baja exitosa."); time.sleep(1.5); st.rerun()
+            else: st.warning("⚠️ Código no encontrado.")
         except: st.error(ERROR_ADMIN)
 
     st.divider()
@@ -601,10 +601,10 @@ elif menu == "⚠️ MERMAS/DAÑOS":
 elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
     st.subheader("Auditoría Contable de Turno")
     
-    # VISTA 1: TICKET Z 
+    # VISTA 1: TICKET Z (CIERRE FINALIZADO)
     if st.session_state.ticket_cierre:
         tk = st.session_state.ticket_cierre
-        st.success("✅ Caja cerrada. Todos los historiales se han reiniciado a cero para el próximo turno.")
+        st.success("✅ Caja cerrada. Todos los historiales de reportes se han reiniciado a cero.")
         
         ticket_z_html = f"""
         <div class="ticket-termico">
@@ -630,7 +630,7 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
             EFECTIVO EN CAJA: S/. {tk['caja_neta']:.2f}<br>
             UTILIDAD NETA PURA: S/. {tk['utilidad']:.2f}<br>
             --------------------------------<br>
-            <center>Inventario físico mantenido con éxito.</center>
+            <center>Stock físico e inicial actualizado.</center>
         </div>
         """
         st.markdown(ticket_z_html, unsafe_allow_html=True)
@@ -639,7 +639,7 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
             st.session_state.ticket_cierre = None
             st.rerun()
 
-    # VISTA 2: DASHBOARD EN TIEMPO REAL
+    # VISTA 2: DASHBOARD EN TIEMPO REAL Y BOTÓN DE CIERRE
     else:
         try:
             last_cierre_dt = get_last_cierre_dt()
@@ -706,13 +706,14 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
             
             st.markdown('<div class="cierre-box">', unsafe_allow_html=True)
             st.write("### 🛑 CORTAR CAJA Y GENERAR TICKET Z")
-            st.write("Esta acción generará tu reporte final, guardará el historial contable y dejará todos los paneles visuales en S/. 0.00 para iniciar el nuevo día. **Tus productos en vitrina no se borrarán.**")
+            st.write("Esta acción generará tu reporte final, guardará el historial contable, y **convertirá tu Stock Actual en tu nuevo Stock Inicial** para el próximo turno.")
             
             with st.form("form_cierre", clear_on_submit=True):
                 clave_cierre = st.text_input("Ingresa clave Admin para autorizar", type="password")
-                if st.form_submit_button("🔒 APROBAR CIERRE", type="primary"):
+                if st.form_submit_button("🔒 APROBAR CIERRE DE CAJA", type="primary"):
                     if clave_cierre == "123456":
                         try:
+                            # 1. Guardar Corte en Base de Datos
                             supabase.table("cierres_caja").insert({
                                 "total_ventas": float(total_ventas_brutas),
                                 "utilidad": float(ganancia_neta_real),
@@ -720,6 +721,13 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
                                 "total_devoluciones": float(total_devoluciones)
                             }).execute()
                             
+                            # 2. LA MAGIA: Igualar Stock Inicial al Stock Actual
+                            prods_res = supabase.table("productos").select("codigo_barras, stock_actual").execute()
+                            if prods_res.data:
+                                for prod in prods_res.data:
+                                    supabase.table("productos").update({"stock_inicial": prod['stock_actual']}).eq("codigo_barras", prod['codigo_barras']).execute()
+                            
+                            # 3. Preparar Ticket Visual
                             st.session_state.ticket_cierre = {
                                 'fecha': datetime.now().strftime('%d/%m/%Y %H:%M'),
                                 'cant_vendida': cant_vendida,
@@ -733,7 +741,7 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
                                 'utilidad': ganancia_neta_real
                             }
                             st.rerun() 
-                        except: st.error("🚨 Error crítico al guardar en base de datos.")
+                        except Exception as e: st.error("🚨 Error crítico de conexión al ejecutar el cierre.")
                     else: st.error("❌ Clave incorrecta.")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -750,4 +758,4 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
                 for col in ['Venta Unit. (S/.)', 'Ingreso Total (S/.)', 'Ganancia (S/.)']: df_show[col] = df_show[col].apply(lambda x: f"S/. {x:.2f}")
                 st.dataframe(df_show, use_container_width=True)
             else: st.info("No hay ventas en este turno.")
-        except: st.error(ERROR_ADMIN)
+        except Exception as e: st.error(ERROR_ADMIN)

@@ -18,7 +18,7 @@ st.set_page_config(page_title="JORDAN POS SMART", layout="wide", page_icon="📱
 # --- 2. MENSAJE OFICIAL DE SOPORTE ---
 ERROR_ADMIN = "🚨 Ocurrió un error inesperado. Por favor, contactar con el administrador: **Williams Luna - Celular: 95555555**"
 
-# --- 3. ESTILO VISUAL PROFESIONAL (Optimizado para POS) ---
+# --- 3. ESTILO VISUAL PROFESIONAL ---
 st.markdown("""
     <style>
     .stApp { background-color: #f1f5f9; }
@@ -32,11 +32,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. MEMORIA DEL SISTEMA (LLAVES DINÁMICAS) ---
+# --- 4. MEMORIA DEL SISTEMA (STATE) ---
 keys_to_init = {
     'carrito': [], 'last_ticket': None,
-    'alm_cod': "", 'alm_nom': "", 'cat_nom': "", 'mar_nom': "",
-    'dev_cod': "", 'merma_cod': "",
+    'alm_cod': "", 'alm_nom': "", 'alm_costo': 0.0, 'alm_venta': 0.0, 'alm_pmin': 0.0, 'alm_stock': 1,
+    'cat_nom': "", 'mar_nom': "", 'dev_cod': "", 'merma_cod': "",
     'cam_v_key': 0, 'cam_a_key': 0, 'cam_d_key': 0, 'cam_m_key': 0
 }
 for k, v in keys_to_init.items():
@@ -60,7 +60,7 @@ def load_data(table):
     except: return pd.DataFrame()
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v4.8</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v4.9</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
 
@@ -87,11 +87,13 @@ if menu == "🛒 VENTAS (POS)":
                                 if not exist:
                                     st.session_state.carrito.append({'id': code, 'nombre': p['nombre'], 'precio': float(p['precio_lista']), 'cant': 1})
                                 st.success(f"Añadido: {p['nombre']}")
-                                st.session_state.cam_v_key += 1 # Reinicia la cámara al instante
+                                st.session_state.cam_v_key += 1 
                                 time.sleep(0.5); st.rerun()
                             else: st.error("❌ Sin stock disponible.")
                         else: st.warning("⚠️ Producto no encontrado en el sistema.")
                     except: st.error(ERROR_ADMIN)
+                else:
+                    st.warning("⚠️ La foto está borrosa o el código no es visible. ¡Intenta de nuevo!")
 
         search = st.text_input("Búsqueda Manual (Ej. Mica S23)")
         if search:
@@ -141,10 +143,9 @@ if menu == "🛒 VENTAS (POS)":
                     
                     st.session_state.last_ticket = {'num': t_num, 'items': st.session_state.carrito.copy(), 'total': total, 'pago': pago, 'doc': doc}
                     st.session_state.carrito = []
-                    st.rerun() # Sin globos, procesamiento limpio y rápido
+                    st.rerun() 
                 except: st.error(ERROR_ADMIN)
         
-        # TICKET FINAL
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
@@ -174,24 +175,24 @@ if menu == "🛒 VENTAS (POS)":
 # ==========================================
 elif menu == "📦 ALMACÉN PRO":
     st.subheader("Gestión de Inventario")
-    t1, t2, t3 = st.tabs(["➕ Ingresar Mercadería", "⚙️ Configurar Listas", "📋 Inventario Actual"])
+    t1, t2, t3 = st.tabs(["➕ Ingresar Mercadería", "⚙️ Configurar Listas", "📋 Inventario y Reabastecimiento"])
     
     with t1:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        # --- PUENTE DIRECTO CÁMARA A CASILLA ---
         with st.expander("📷 ABRIR ESCÁNER", expanded=True):
             img_a = st.camera_input("Scanner Almacén", key=f"cam_almacen_{st.session_state.cam_a_key}")
             if img_a:
                 code_a = scan_pos(img_a)
                 if code_a: 
-                    st.session_state.alm_cod = code_a # Inyecta el texto
-                    st.session_state.cam_a_key += 1 # Reinicia la cámara al instante
-                    st.rerun() # Actualiza la pantalla para ver el texto
+                    st.session_state.alm_cod = code_a 
+                    st.session_state.cam_a_key += 1 
+                    st.rerun() 
+                else:
+                    st.warning("⚠️ La foto está borrosa o el código no es visible.")
         
         cats = load_data("categorias")
         mars = load_data("marcas")
         
-        # Las casillas ahora se rellenan solas gracias al 'key' y la inyección
         c_cod = st.text_input("Código de Barras", key="alm_cod")
         c_nom = st.text_input("Nombre / Descripción del Accesorio", key="alm_nom")
         
@@ -203,24 +204,40 @@ elif menu == "📦 ALMACÉN PRO":
         f_mar = f2.selectbox("Marca", mar_list)
         f_cal = f3.selectbox("Calidad", ["Genérico", "Original", "AAA", "Alta Gama"])
         
-        f4, f5, f6 = st.columns(3)
-        f_costo = f4.number_input("Costo de Compra (S/.)", min_value=0.0, step=0.5)
-        f_venta = f5.number_input("Precio Venta Público (S/.)", min_value=0.0, step=0.5)
-        f_stock = f6.number_input("Stock Inicial", min_value=1)
+        f4, f5, f6, f7 = st.columns(4)
+        f_costo = f4.number_input("Costo Compra (S/.)", key="alm_costo", min_value=0.0, step=0.5)
+        f_venta = f5.number_input("Precio Venta (S/.)", key="alm_venta", min_value=0.0, step=0.5)
+        f_pmin = f6.number_input("Precio Mínimo (S/.)", key="alm_pmin", min_value=0.0, step=0.5)
+        f_stock = f7.number_input("Stock Inicial", key="alm_stock", min_value=1, step=1)
         
         if st.button("🚀 GUARDAR EN INVENTARIO", type="primary"):
             if st.session_state.alm_cod and st.session_state.alm_nom and not cats.empty and not mars.empty:
                 try:
-                    cid = int(cats[cats['nombre'] == f_cat]['id'].values[0])
-                    mid = int(mars[mars['nombre'] == f_mar]['id'].values[0])
-                    supabase.table("productos").insert({"codigo_barras": st.session_state.alm_cod, "nombre": st.session_state.alm_nom, "categoria_id": cid, "marca_id": mid, "calidad": f_cal, "costo_compra": f_costo, "precio_lista": f_venta, "precio_minimo": f_costo, "stock_actual": f_stock}).execute()
-                    
-                    # Limpiamos las casillas automáticamente
-                    st.session_state.alm_cod = ""
-                    st.session_state.alm_nom = ""
-                    st.success("✅ Producto registrado exitosamente.")
-                    time.sleep(1); st.rerun()
-                except: st.error(ERROR_ADMIN)
+                    # Verificar si el código ya existe
+                    check_exist = supabase.table("productos").select("codigo_barras").eq("codigo_barras", st.session_state.alm_cod).execute()
+                    if check_exist.data:
+                        st.error("❌ Este código de barras ya existe. Ve a la pestaña 'Inventario y Reabastecimiento' para sumarle stock.")
+                    else:
+                        cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
+                        mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
+                        supabase.table("productos").insert({
+                            "codigo_barras": st.session_state.alm_cod, "nombre": st.session_state.alm_nom, 
+                            "categoria_id": cid, "marca_id": mid, "calidad": f_cal, 
+                            "costo_compra": st.session_state.alm_costo, "precio_lista": st.session_state.alm_venta, 
+                            "precio_minimo": st.session_state.alm_pmin, "stock_actual": st.session_state.alm_stock
+                        }).execute()
+                        
+                        # Limpieza total del formulario
+                        st.session_state.alm_cod = ""
+                        st.session_state.alm_nom = ""
+                        st.session_state.alm_costo = 0.0
+                        st.session_state.alm_venta = 0.0
+                        st.session_state.alm_pmin = 0.0
+                        st.session_state.alm_stock = 1
+                        st.success("✅ Producto registrado exitosamente.")
+                        time.sleep(1.5); st.rerun()
+                except Exception as e: 
+                    st.error(f"{ERROR_ADMIN} (Detalle oculto para seguridad)")
             else: 
                 st.warning("⚠️ Debes rellenar código, nombre y asegurarte de haber creado Categorías y Marcas.")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -231,15 +248,14 @@ elif menu == "📦 ALMACÉN PRO":
         with c_left:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             st.write("#### 📂 Categorías")
-            new_c = st.text_input("Crear Categoría (Ej: Micas, Cases)", key="cat_nom")
+            new_c = st.text_input("Crear Categoría", key="cat_nom")
             if st.button("➕ Guardar Categoría", type="primary"):
                 if st.session_state.cat_nom: 
                     try:
                         supabase.table("categorias").insert({"nombre": st.session_state.cat_nom}).execute()
-                        st.session_state.cat_nom = "" # Se limpia sola
+                        st.session_state.cat_nom = "" 
                         st.success("Guardada."); time.sleep(1); st.rerun()
                     except: st.error(ERROR_ADMIN)
-            
             cats_df = load_data("categorias")
             if not cats_df.empty:
                 del_c = st.selectbox("Eliminar Categoría", ["..."] + cats_df['nombre'].tolist())
@@ -249,21 +265,20 @@ elif menu == "📦 ALMACÉN PRO":
                             supabase.table("categorias").delete().eq("nombre", del_c).execute()
                             st.rerun()
                         except: st.error(ERROR_ADMIN)
-            else: st.info("📭 Aún no se han registrado categorías.")
+            else: st.info("📭 Sin categorías.")
             st.markdown('</div>', unsafe_allow_html=True)
             
         with c_right:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             st.write("#### ®️ Marcas")
-            new_m = st.text_input("Crear Marca (Ej: Samsung)", key="mar_nom")
+            new_m = st.text_input("Crear Marca", key="mar_nom")
             if st.button("➕ Guardar Marca", type="primary"):
                 if st.session_state.mar_nom: 
                     try:
                         supabase.table("marcas").insert({"nombre": st.session_state.mar_nom}).execute()
-                        st.session_state.mar_nom = "" # Se limpia sola
+                        st.session_state.mar_nom = "" 
                         st.success("Guardada."); time.sleep(1); st.rerun()
                     except: st.error(ERROR_ADMIN)
-            
             mars_df = load_data("marcas")
             if not mars_df.empty:
                 del_m = st.selectbox("Eliminar Marca", ["..."] + mars_df['nombre'].tolist())
@@ -273,14 +288,44 @@ elif menu == "📦 ALMACÉN PRO":
                             supabase.table("marcas").delete().eq("nombre", del_m).execute()
                             st.rerun()
                         except: st.error(ERROR_ADMIN)
-            else: st.info("📭 Aún no se han registrado marcas.")
+            else: st.info("📭 Sin marcas.")
             st.markdown('</div>', unsafe_allow_html=True)
 
     with t3:
-        prods = load_data("productos")
-        if not prods.empty: 
-            st.dataframe(prods, use_container_width=True)
-        else: st.info("📭 Aún no se han registrado productos en el inventario.")
+        st.write("### 📋 Inventario General")
+        # Mostrar nombres en lugar de IDs (Traducción Relacional)
+        try:
+            prods = supabase.table("productos").select("*, categorias(nombre), marcas(nombre)").execute()
+            if prods.data: 
+                df = pd.DataFrame(prods.data)
+                df['Categoría'] = df['categorias'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
+                df['Marca'] = df['marcas'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
+                df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'calidad', 'stock_actual', 'precio_lista', 'precio_minimo']]
+                st.dataframe(df_show, use_container_width=True)
+                
+                # --- MÓDULO DE REABASTECIMIENTO RÁPIDO ---
+                st.divider()
+                st.write("### ⚡ Reabastecimiento Rápido")
+                st.info("Actualiza el stock de un producto existente sin tener que escanearlo o registrarlo de nuevo.")
+                col_r1, col_r2 = st.columns([3, 1])
+                
+                prod_options = [f"{row['codigo_barras']} - {row['nombre']} (Stock actual: {row['stock_actual']})" for idx, row in df.iterrows()]
+                selected_prod = col_r1.selectbox("Selecciona el producto a recargar:", ["Seleccionar..."] + prod_options)
+                add_stock = col_r2.number_input("Cantidad a sumar", min_value=1, step=1)
+                
+                if st.button("➕ Sumar al Stock", type="primary"):
+                    if selected_prod != "Seleccionar...":
+                        code_to_update = selected_prod.split(" - ")[0]
+                        current_stock = int(df[df['codigo_barras'] == code_to_update]['stock_actual'].iloc[0])
+                        new_stock = current_stock + add_stock
+                        try:
+                            supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", code_to_update).execute()
+                            st.success(f"✅ Stock actualizado. Nuevo stock: {new_stock}")
+                            time.sleep(1.5); st.rerun()
+                        except: st.error(ERROR_ADMIN)
+            else: 
+                st.info("📭 Aún no se han registrado productos en el inventario.")
+        except: st.error(ERROR_ADMIN)
 
 # ==========================================
 # 🔄 MÓDULO 3: DEVOLUCIONES
@@ -292,14 +337,15 @@ elif menu == "🔄 DEVOLUCIONES":
         if img_dev:
             code_dev = scan_pos(img_dev)
             if code_dev:
-                st.session_state.dev_cod = code_dev # Inyección
-                st.session_state.cam_d_key += 1 # Reinicio cámara
+                st.session_state.dev_cod = code_dev 
+                st.session_state.cam_d_key += 1 
                 st.rerun()
+            else: st.warning("⚠️ Foto borrosa, intenta de nuevo.")
 
-    tick = st.text_input("Ingresa el Número de Ticket o Código", key="dev_cod")
+    tick = st.text_input("Ingresa el Número de Ticket o Código de Producto", key="dev_cod")
     if tick:
         try:
-            v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", st.session_state.dev_cod).execute()
+            v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", tick).execute()
             if v_cab.data:
                 st.success(f"✅ Ticket encontrado. Método original: {v_cab.data[0]['metodo_pago']}")
                 v_det = supabase.table("ventas_detalle").select("*, productos(nombre)").eq("venta_id", v_cab.data[0]['id']).execute()
@@ -310,7 +356,7 @@ elif menu == "🔄 DEVOLUCIONES":
                         p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
                         supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
                         supabase.table("devoluciones").insert({"producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
-                        st.session_state.dev_cod = "" # Limpia casilla
+                        st.session_state.dev_cod = "" 
                         st.success("✅ Dinero descontado y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
             else: st.warning("⚠️ Ticket no encontrado en el sistema. Verifica el número.")
         except: st.error(ERROR_ADMIN)
@@ -325,9 +371,10 @@ elif menu == "⚠️ MERMAS/DAÑOS":
         if img_m:
             code_m = scan_pos(img_m)
             if code_m:
-                st.session_state.merma_cod = code_m # Inyección
-                st.session_state.cam_m_key += 1 # Reinicio cámara
+                st.session_state.merma_cod = code_m 
+                st.session_state.cam_m_key += 1 
                 st.rerun()
+            else: st.warning("⚠️ Foto borrosa, intenta de nuevo.")
 
     m_cod = st.text_input("Código de Barras del Producto Dañado", key="merma_cod")
     m_cant = st.number_input("Cantidad a descontar", min_value=1)
@@ -341,7 +388,7 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                     if p_inf.data[0]['stock_actual'] >= m_cant:
                         supabase.table("productos").update({"stock_actual": p_inf.data[0]['stock_actual'] - m_cant}).eq("codigo_barras", st.session_state.merma_cod).execute()
                         supabase.table("mermas").insert({"producto_id": st.session_state.merma_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_inf.data[0]['costo_compra'] * m_cant}).execute()
-                        st.session_state.merma_cod = "" # Limpia casilla
+                        st.session_state.merma_cod = "" 
                         st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
                     else: st.error("❌ No puedes dar de baja más stock del que tienes.")
                 else: st.warning("⚠️ Código de producto inválido o no existe en inventario.")

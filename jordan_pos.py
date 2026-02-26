@@ -29,39 +29,54 @@ st.markdown("""
         padding: 15px; border: 1px dashed #333; width: 100%; max-width: 300px; margin: 0 auto; line-height: 1.2; font-size: 14px;
     }
     .stButton>button { border-radius: 6px; font-weight: bold; height: 3.5em; width: 100%; }
+    .resumen-duplicado { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 4. MEMORIA DEL SISTEMA (STATE) ---
 keys_to_init = {
     'carrito': [], 'last_ticket': None,
-    'alm_cod': "", 'alm_nom': "", 'alm_costo': 0.0, 'alm_venta': 0.0, 'alm_pmin': 0.0, 'alm_stock': 1,
-    'cat_nom': "", 'mar_nom': "", 'dev_cod': "", 'merma_cod': "",
+    'alm_cod_injected': "", 'cat_nom': "", 'mar_nom': "", 
+    'dev_cod': "", 'merma_cod': "",
     'cam_v_key': 0, 'cam_a_key': 0, 'cam_d_key': 0, 'cam_m_key': 0
 }
 for k, v in keys_to_init.items():
     if k not in st.session_state: st.session_state[k] = v
 
-# --- 5. FUNCIONES DE APOYO (CÁMARA OPTIMIZADA) ---
+# --- 5. FUNCIONES DE APOYO (CÁMARA "OJO DE ÁGUILA") ---
 def scan_pos(image):
     if not image: return None
     try:
         file_bytes = np.asarray(bytearray(image.read()), dtype=np.uint8)
-        img_original = cv2.imdecode(file_bytes, 1)
+        img = cv2.imdecode(file_bytes, 1)
         
-        # Algoritmo de "Ojo de Águila": Recorta el centro y pasa a grises para forzar lectura
-        h, w, _ = img_original.shape
-        start_row, start_col = int(h * 0.20), int(w * 0.20)
-        end_row, end_col = int(h * 0.80), int(w * 0.80)
-        img_crop = img_original[start_row:end_row, start_col:end_col]
-
-        imagenes = [img_crop, cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY), img_original]
+        # 1. Pasar a escala de grises
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        for img in imagenes:
-            try:
-                res = zxingcpp.read_barcodes(img)
-                if res: return res[0].text
-            except: continue
+        # 2. Aplicar filtro CLAHE para contrastar fuertemente (ayuda si hay sombras o reflejos)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced_gray = clahe.apply(gray)
+        
+        # 3. Binarización (Blanco y Negro puro)
+        _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        
+        # 4. Recortar el centro de la imagen (elimina distracciones)
+        h, w = gray.shape
+        c_enh = enhanced_gray[int(h*0.2):int(h*0.8), int(w*0.1):int(w*0.9)]
+        c_gray = gray[int(h*0.2):int(h*0.8), int(w*0.1):int(w*0.9)]
+        
+        # Arsenal de imágenes a probar (la más clara a la más cruda)
+        images_to_try = [c_enh, c_gray, thresh, enhanced_gray, gray, img]
+        
+        for test_img in images_to_try:
+            # Intento normal
+            res = zxingcpp.read_barcodes(test_img)
+            if res: return res[0].text
+            
+            # Intento rotado 90 grados (por si se tomó de lado)
+            res_rot = zxingcpp.read_barcodes(cv2.rotate(test_img, cv2.ROTATE_90_CLOCKWISE))
+            if res_rot: return res_rot[0].text
+            
         return None
     except:
         return None
@@ -73,7 +88,7 @@ def load_data(table):
     except: return pd.DataFrame()
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.1</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
 
@@ -109,7 +124,7 @@ if menu == "🛒 VENTAS (POS)":
                     
                     if exito_cam: time.sleep(0.5); st.rerun()
                 else:
-                    st.warning("⚠️ No se detectó código. Intenta acercar o alejar la cámara.")
+                    st.error("⚠️ Foto muy borrosa o mal enfocada. Intenta darle más luz o acércate.")
 
         search = st.text_input("Búsqueda Manual (Ej. Mica S23)")
         if search:
@@ -203,63 +218,82 @@ elif menu == "📦 ALMACÉN PRO":
             if img_a:
                 code_a = scan_pos(img_a)
                 if code_a: 
-                    st.session_state.alm_cod = code_a 
-                    st.session_state.cam_a_key += 1 
-                    st.rerun() 
+                    # 1. REVISAR SI EL PRODUCTO YA EXISTE ANTES DE LLENAR EL FORMULARIO
+                    try:
+                        check = supabase.table("productos").select("*, categorias(nombre), marcas(nombre)").eq("codigo_barras", code_a).execute()
+                        if check.data:
+                            p_exist = check.data[0]
+                            cat_n = p_exist['categorias']['nombre'] if p_exist['categorias'] else 'Sin Categoría'
+                            mar_n = p_exist['marcas']['nombre'] if p_exist['marcas'] else 'Sin Marca'
+                            
+                            st.markdown(f"""
+                            <div class="resumen-duplicado">
+                                <b>⚠️ ¡ALERTA! ESTE PRODUCTO YA EXISTE</b><br><br>
+                                <b>Código:</b> {p_exist['codigo_barras']}<br>
+                                <b>Nombre:</b> {p_exist['nombre']}<br>
+                                <b>Marca / Categoría:</b> {mar_n} / {cat_n}<br>
+                                <b>Stock Disponible:</b> {p_exist['stock_actual']} unidades<br>
+                                <b>Precio de Venta:</b> S/. {p_exist['precio_lista']}<br><br>
+                                <i>👉 Ve a la pestaña 'Inventario y Reabastecimiento' para sumarle más cantidad de forma rápida.</i>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            st.session_state.cam_a_key += 1 
+                        else:
+                            # Si no existe, lo inyecta para guardarlo
+                            st.session_state.alm_cod_injected = code_a 
+                            st.session_state.cam_a_key += 1 
+                            st.success(f"¡Código capturado con éxito: {code_a}!")
+                            time.sleep(1); st.rerun() 
+                    except Exception as e:
+                        st.error(f"{ERROR_ADMIN} | Detalle: {e}")
                 else:
-                    st.warning("⚠️ No se detectó código. Intenta de nuevo.")
+                    st.error("⚠️ La foto está muy borrosa. Asegúrate de enfocar bien las barras y tener buena luz.")
         
         cats = load_data("categorias")
         mars = load_data("marcas")
         
-        c_cod = st.text_input("Código de Barras", key="alm_cod")
-        c_nom = st.text_input("Nombre / Descripción del Accesorio", key="alm_nom")
-        
-        f1, f2, f3 = st.columns(3)
-        cat_list = cats['nombre'].tolist() if not cats.empty else ["Aún no hay categorías"]
-        mar_list = mars['nombre'].tolist() if not mars.empty else ["Aún no hay marcas"]
-        
-        f_cat = f1.selectbox("Categoría", cat_list)
-        f_mar = f2.selectbox("Marca", mar_list)
-        f_cal = f3.selectbox("Calidad", ["Genérico", "Original", "AAA", "Alta Gama"])
-        
-        f4, f5, f6, f7 = st.columns(4)
-        f_costo = f4.number_input("Costo Compra (S/.)", key="alm_costo", min_value=0.0, step=0.5)
-        f_venta = f5.number_input("Precio Venta (S/.)", key="alm_venta", min_value=0.0, step=0.5)
-        f_pmin = f6.number_input("Precio Mínimo (S/.)", key="alm_pmin", min_value=0.0, step=0.5)
-        f_stock = f7.number_input("Stock Inicial", key="alm_stock", min_value=1, step=1)
-        
-        if st.button("🚀 GUARDAR EN INVENTARIO", type="primary"):
-            exito_inv = False
-            if st.session_state.alm_cod and st.session_state.alm_nom and not cats.empty and not mars.empty:
-                try:
-                    check_exist = supabase.table("productos").select("codigo_barras").eq("codigo_barras", st.session_state.alm_cod).execute()
-                    if check_exist.data:
-                        st.error("❌ Este código de barras ya existe. Ve a la pestaña 'Inventario y Reabastecimiento' para sumarle stock.")
-                    else:
-                        cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
-                        mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
-                        supabase.table("productos").insert({
-                            "codigo_barras": st.session_state.alm_cod, "nombre": st.session_state.alm_nom, 
-                            "categoria_id": cid, "marca_id": mid, "calidad": f_cal, 
-                            "costo_compra": st.session_state.alm_costo, "precio_lista": st.session_state.alm_venta, 
-                            "precio_minimo": st.session_state.alm_pmin, "stock_actual": st.session_state.alm_stock
-                        }).execute()
-                        
-                        st.session_state.alm_cod = ""
-                        st.session_state.alm_nom = ""
-                        st.session_state.alm_costo = 0.0
-                        st.session_state.alm_venta = 0.0
-                        st.session_state.alm_pmin = 0.0
-                        st.session_state.alm_stock = 1
-                        exito_inv = True
-                except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
-            else: 
-                st.warning("⚠️ Debes rellenar código, nombre y asegurarte de haber creado Categorías y Marcas.")
+        # SOLUCIÓN DE ERROR DE STREAMLIT: Usar form_nuevo para evitar choque de variables
+        with st.form("form_nuevo", clear_on_submit=True):
+            c_cod = st.text_input("Código de Barras", value=st.session_state.get('alm_cod_injected', ''))
+            c_nom = st.text_input("Nombre / Descripción del Accesorio")
             
-            if exito_inv: 
-                st.success("✅ Producto registrado exitosamente.")
-                time.sleep(1.5); st.rerun()
+            f1, f2, f3 = st.columns(3)
+            cat_list = cats['nombre'].tolist() if not cats.empty else ["Aún no hay categorías"]
+            mar_list = mars['nombre'].tolist() if not mars.empty else ["Aún no hay marcas"]
+            
+            f_cat = f1.selectbox("Categoría", cat_list)
+            f_mar = f2.selectbox("Marca", mar_list)
+            f_cal = f3.selectbox("Calidad", ["Genérico", "Original", "AAA", "Alta Gama"])
+            
+            f4, f5, f6, f7 = st.columns(4)
+            f_costo = f4.number_input("Costo Compra (S/.)", min_value=0.0, step=0.5)
+            f_venta = f5.number_input("Precio Venta (S/.)", min_value=0.0, step=0.5)
+            f_pmin = f6.number_input("Precio Mínimo (S/.)", min_value=0.0, step=0.5)
+            f_stock = f7.number_input("Stock Inicial", min_value=1, step=1)
+            
+            # Botón dentro del Formulario (Evita el error 'st.session_state.alm_cod cannot be modified')
+            if st.form_submit_button("🚀 GUARDAR EN INVENTARIO", type="primary"):
+                if c_cod and c_nom and not cats.empty and not mars.empty:
+                    try:
+                        # Verificamos si alguien lo escribió a mano y ya existe
+                        check_exist = supabase.table("productos").select("codigo_barras").eq("codigo_barras", c_cod).execute()
+                        if check_exist.data:
+                            st.error("❌ Este código de barras ya existe en la base de datos.")
+                        else:
+                            cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
+                            mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
+                            supabase.table("productos").insert({
+                                "codigo_barras": c_cod, "nombre": c_nom, 
+                                "categoria_id": cid, "marca_id": mid, "calidad": f_cal, 
+                                "costo_compra": f_costo, "precio_lista": f_venta, 
+                                "precio_minimo": f_pmin, "stock_actual": f_stock
+                            }).execute()
+                            
+                            st.session_state.alm_cod_injected = "" # Limpia la inyección
+                            st.success("✅ Producto registrado exitosamente.")
+                    except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                else: 
+                    st.warning("⚠️ Debes rellenar código, nombre y tener creadas Categorías y Marcas.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t2:
@@ -268,56 +302,46 @@ elif menu == "📦 ALMACÉN PRO":
         with c_left:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             st.write("#### 📂 Categorías")
-            new_c = st.text_input("Crear Categoría", key="cat_nom")
-            if st.button("➕ Guardar Categoría", type="primary"):
-                exito_c = False
-                if st.session_state.cat_nom: 
-                    try:
-                        supabase.table("categorias").insert({"nombre": st.session_state.cat_nom}).execute()
-                        st.session_state.cat_nom = "" 
-                        exito_c = True
-                    except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
-                if exito_c: st.success("Guardada."); time.sleep(1); st.rerun()
-
+            with st.form("f_cat", clear_on_submit=True):
+                new_c = st.text_input("Crear Categoría")
+                if st.form_submit_button("➕ Guardar", type="primary"):
+                    if new_c: 
+                        try:
+                            supabase.table("categorias").insert({"nombre": new_c}).execute()
+                            st.success("Guardada."); time.sleep(1); st.rerun()
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
             cats_df = load_data("categorias")
             if not cats_df.empty:
                 del_c = st.selectbox("Eliminar Categoría", ["..."] + cats_df['nombre'].tolist())
                 if st.button("🗑️ Borrar Categoría"):
-                    exito_dc = False
                     if del_c != "...": 
                         try:
                             supabase.table("categorias").delete().eq("nombre", del_c).execute()
-                            exito_dc = True
+                            st.rerun()
                         except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
-                    if exito_dc: st.rerun()
             else: st.info("📭 Sin categorías.")
             st.markdown('</div>', unsafe_allow_html=True)
             
         with c_right:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             st.write("#### ®️ Marcas")
-            new_m = st.text_input("Crear Marca", key="mar_nom")
-            if st.button("➕ Guardar Marca", type="primary"):
-                exito_m = False
-                if st.session_state.mar_nom: 
-                    try:
-                        supabase.table("marcas").insert({"nombre": st.session_state.mar_nom}).execute()
-                        st.session_state.mar_nom = "" 
-                        exito_m = True
-                    except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
-                if exito_m: st.success("Guardada."); time.sleep(1); st.rerun()
-
+            with st.form("f_mar", clear_on_submit=True):
+                new_m = st.text_input("Crear Marca")
+                if st.form_submit_button("➕ Guardar", type="primary"):
+                    if new_m: 
+                        try:
+                            supabase.table("marcas").insert({"nombre": new_m}).execute()
+                            st.success("Guardada."); time.sleep(1); st.rerun()
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
             mars_df = load_data("marcas")
             if not mars_df.empty:
                 del_m = st.selectbox("Eliminar Marca", ["..."] + mars_df['nombre'].tolist())
                 if st.button("🗑️ Borrar Marca"):
-                    exito_dm = False
                     if del_m != "...": 
                         try:
                             supabase.table("marcas").delete().eq("nombre", del_m).execute()
-                            exito_dm = True
+                            st.rerun()
                         except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
-                    if exito_dm: st.rerun()
             else: st.info("📭 Sin marcas.")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -332,7 +356,7 @@ elif menu == "📦 ALMACÉN PRO":
                 df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'calidad', 'stock_actual', 'precio_lista', 'precio_minimo']]
                 st.dataframe(df_show, use_container_width=True)
                 
-                # --- MÓDULO DE REABASTECIMIENTO RÁPIDO CORREGIDO ---
+                # --- MÓDULO DE REABASTECIMIENTO RÁPIDO ---
                 st.divider()
                 st.write("### ⚡ Reabastecimiento Rápido")
                 st.info("Suma stock rápidamente a un producto existente.")
@@ -343,19 +367,15 @@ elif menu == "📦 ALMACÉN PRO":
                 add_stock = col_r2.number_input("Cantidad a sumar", min_value=1, step=1)
                 
                 if st.button("➕ Sumar al Stock", type="primary"):
-                    exito_re = False
                     if selected_prod != "Seleccionar...":
                         code_to_update = selected_prod.split(" - ")[0]
                         current_stock = int(df[df['codigo_barras'] == code_to_update]['stock_actual'].iloc[0])
                         new_stock = current_stock + add_stock
                         try:
                             supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", code_to_update).execute()
-                            exito_re = True
-                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
-                        
-                        if exito_re:
                             st.success(f"✅ Stock actualizado. Nuevo stock: {new_stock}")
-                            time.sleep(1.5); st.rerun()
+                            time.sleep(1.5); st.rerun() # Reinicio fuera del try para evitar error visual
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
             else: 
                 st.info("📭 Aún no se han registrado productos en el inventario.")
         except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
@@ -373,7 +393,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 st.session_state.dev_cod = code_dev 
                 st.session_state.cam_d_key += 1 
                 st.rerun()
-            else: st.warning("⚠️ No se detectó código. Intenta de nuevo.")
+            else: st.warning("⚠️ No se detectó código. Intenta enfocar mejor.")
 
     tick = st.text_input("Ingresa el Número de Ticket o Código de Producto", key="dev_cod")
     if tick:
@@ -411,7 +431,7 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                 st.session_state.merma_cod = code_m 
                 st.session_state.cam_m_key += 1 
                 st.rerun()
-            else: st.warning("⚠️ No se detectó código. Intenta de nuevo.")
+            else: st.warning("⚠️ No se detectó código. Intenta enfocar mejor.")
 
     m_cod = st.text_input("Código de Barras del Producto Dañado", key="merma_cod")
     m_cant = st.number_input("Cantidad a descontar", min_value=1)
@@ -419,13 +439,13 @@ elif menu == "⚠️ MERMAS/DAÑOS":
     
     if st.button("⚠️ CONFIRMAR PÉRDIDA Y DESCONTAR", type="primary"):
         exito_merma = False
-        if st.session_state.merma_cod:
+        if m_cod:
             try:
-                p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", st.session_state.merma_cod).execute()
+                p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", m_cod).execute()
                 if p_inf.data:
                     if p_inf.data[0]['stock_actual'] >= m_cant:
-                        supabase.table("productos").update({"stock_actual": p_inf.data[0]['stock_actual'] - m_cant}).eq("codigo_barras", st.session_state.merma_cod).execute()
-                        supabase.table("mermas").insert({"producto_id": st.session_state.merma_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_inf.data[0]['costo_compra'] * m_cant}).execute()
+                        supabase.table("productos").update({"stock_actual": p_inf.data[0]['stock_actual'] - m_cant}).eq("codigo_barras", m_cod).execute()
+                        supabase.table("mermas").insert({"producto_id": m_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_inf.data[0]['costo_compra'] * m_cant}).execute()
                         st.session_state.merma_cod = "" 
                         exito_merma = True
                     else: st.error("❌ No puedes dar de baja más stock del que tienes.")

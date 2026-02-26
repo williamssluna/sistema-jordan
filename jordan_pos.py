@@ -24,13 +24,9 @@ st.markdown("""
     .stApp { background-color: #f8f9fa; }
     .css-card { background-color: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
     .stButton>button { width: 100%; height: 60px; font-size: 18px; border-radius: 12px; font-weight: bold; }
-    
-    /* Botones */
     .btn-verde>button { background-color: #28a745; color: white; border: none; }
     .btn-rojo>button { background-color: #dc3545; color: white; border: none; }
     .btn-azul>button { background-color: #007bff; color: white; border: none; }
-    
-    /* Mensajes */
     .success-scan { background-color: #d1e7dd; color: #0f5132; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 20px; margin: 10px 0; border: 1px solid #badbcc; }
     </style>
     """, unsafe_allow_html=True)
@@ -100,7 +96,6 @@ def check_login(clave_unica):
     return True
 
 st.title("📱 Accesorios Jordan")
-
 tabs = st.tabs(["🛒 VENDER", "➕ AGREGAR", "📊 ALMACÉN"])
 
 # ==================================================
@@ -151,7 +146,7 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# PESTAÑA 2: AGREGAR (CORREGIDA LA SINCRONIZACIÓN)
+# PESTAÑA 2: AGREGAR (LIBERADA DEL FORMULARIO)
 # ==================================================
 with tabs[1]:
     if check_login("tab_agregar"):
@@ -162,53 +157,54 @@ with tabs[1]:
             st.session_state.admin_login = False
             st.rerun()
 
+        # 1. ESCÁNER
         with st.expander("📷 ABRIR ESCÁNER", expanded=True):
             img_a = st.camera_input("Escanear nuevo", key="cam_add")
             if img_a:
                 code_a = procesar_imagen_avanzado(img_a)
                 if code_a:
-                    # AQUÍ ESTÁ EL TRUCO: Guardamos directo en la memoria y recargamos
                     st.session_state.scan_agregar = code_a
-                    st.success("¡Capturado!")
+                    st.success(f"¡Capturado: {code_a}!")
                     st.rerun()
 
-        with st.form("form_add"):
-            # IMPORTANTE: Usamos 'key' para conectar directo a la memoria
-            # Ya no usamos 'value=', la key hace el trabajo sucio
-            c_barras = st.text_input("Código", key="scan_agregar") 
-            nombre = st.text_input("Nombre del Producto")
-            
-            c1, c2 = st.columns(2)
-            costo = c1.number_input("Costo Compra", min_value=0.0)
-            stock = c2.number_input("Stock Inicial", min_value=1)
-            
-            c3, c4 = st.columns(2)
-            p_venta = c3.number_input("Precio Venta", min_value=0.0)
-            p_min = c4.number_input("Precio Mínimo", min_value=0.0)
-            
-            st.markdown('<span class="btn-azul">', unsafe_allow_html=True)
-            if st.form_submit_button("💾 GUARDAR PRODUCTO"):
-                if c_barras and nombre:
-                    try:
-                        c_barras = c_barras.strip()
-                        supabase.table("productos").insert({
-                            "codigo_barras": c_barras, "nombre": nombre, "costo_compra": costo,
-                            "precio_lista": p_venta, "precio_minimo": p_min, "stock_actual": stock
-                        }).execute()
-                        st.success(f"✅ {nombre} agregado.")
-                        # Limpiamos la memoria tras guardar
-                        st.session_state.scan_agregar = ""
-                        time.sleep(1.5)
-                        st.rerun()
-                    except Exception as e:
-                        if "duplicate key" in str(e):
-                            st.error("⛔ ERROR: Código duplicado.")
-                        else: st.error(f"Error: {e}")
-                else: st.warning("Falta nombre o código.")
-            st.markdown('</span>', unsafe_allow_html=True)
+        # 2. CAMPOS LIBRES (Ya no están atrapados en st.form)
+        # Esto permite que el código se actualice al instante
+        st.write("---")
+        c_barras = st.text_input("Código de Barras", key="scan_agregar") 
+        nombre = st.text_input("Nombre del Producto")
         
-        # Botón extra para limpiar manual
-        if st.button("🧹 Limpiar Formulario"):
+        c1, c2 = st.columns(2)
+        costo = c1.number_input("Costo Compra", min_value=0.0)
+        stock = c2.number_input("Stock Inicial", min_value=1)
+        
+        c3, c4 = st.columns(2)
+        p_venta = c3.number_input("Precio Venta", min_value=0.0)
+        p_min = c4.number_input("Precio Mínimo", min_value=0.0)
+        
+        st.markdown('<span class="btn-azul">', unsafe_allow_html=True)
+        
+        # El botón ahora guarda directamente
+        if st.button("💾 GUARDAR PRODUCTO"):
+            if c_barras and nombre:
+                try:
+                    c_barras = c_barras.strip()
+                    supabase.table("productos").insert({
+                        "codigo_barras": c_barras, "nombre": nombre, "costo_compra": costo,
+                        "precio_lista": p_venta, "precio_minimo": p_min, "stock_actual": stock
+                    }).execute()
+                    st.success(f"✅ {nombre} agregado.")
+                    st.session_state.scan_agregar = "" # Limpiar
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    if "duplicate key" in str(e):
+                        st.error("⛔ ERROR: Código duplicado.")
+                    else: st.error(f"Error: {e}")
+            else:
+                st.warning("Falta nombre o código.")
+        st.markdown('</span>', unsafe_allow_html=True)
+        
+        if st.button("🧹 Limpiar"):
             st.session_state.scan_agregar = ""
             st.rerun()
             
@@ -253,3 +249,4 @@ with tabs[2]:
                 st.dataframe(df.tail(10), use_container_width=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
+

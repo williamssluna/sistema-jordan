@@ -94,17 +94,14 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.7</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.8</div>', unsafe_allow_html=True)
 
 # --- 6. SISTEMA DE LOGIN Y MENÚ DINÁMICO ---
 st.sidebar.markdown("### 🏢 Panel de Control")
 
-# Definir opciones del menú según el nivel de acceso
 if st.session_state.admin_auth:
-    # MENÚ COMPLETO (DUEÑO)
     menu_options = ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"]
 else:
-    # MENÚ RESTRINGIDO (VENDEDORES)
     menu_options = ["🛒 VENTAS (POS)", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS"]
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", menu_options)
@@ -113,7 +110,7 @@ st.sidebar.divider()
 
 # Módulo de Autenticación
 if not st.session_state.admin_auth:
-    st.sidebar.markdown("#### 🔐 Acceso Privado (Dueño)")
+    st.sidebar.markdown("#### 🔐 Acceso Privado")
     usuario = st.sidebar.text_input("Usuario")
     clave = st.sidebar.text_input("Contraseña", type="password")
     if st.sidebar.button("Entrar", use_container_width=True):
@@ -123,7 +120,7 @@ if not st.session_state.admin_auth:
         else:
             st.sidebar.error("❌ Credenciales incorrectas")
 else:
-    st.sidebar.success("✅ Modo Dueño Activado")
+    st.sidebar.success("✅ Modo Administrador Activado")
     if st.sidebar.button("🔒 Cerrar Sesión Segura", use_container_width=True):
         st.session_state.admin_auth = False
         st.rerun()
@@ -138,7 +135,7 @@ if menu == "🛒 VENTAS (POS)":
         
         with st.form("form_manual_barcode", clear_on_submit=True):
             col_mb1, col_mb2 = st.columns([3, 1])
-            manual_code = col_mb1.text_input("Tipear Código Numérico (Plan B)")
+            manual_code = col_mb1.text_input("Tipear Código Numérico")
             add_manual = col_mb2.form_submit_button("➕ Agregar")
             if add_manual and manual_code:
                 if procesar_codigo_venta(manual_code):
@@ -177,7 +174,7 @@ if menu == "🛒 VENTAS (POS)":
             except Exception as e: st.error(ERROR_ADMIN)
 
     with col_v2:
-        st.subheader("🛍️ Carrito (Regateo y Cobro)")
+        st.subheader("🛍️ Carrito")
         if not st.session_state.carrito: 
             st.info("🛒 Aún no se han agregado productos al carrito.")
         else:
@@ -198,7 +195,7 @@ if menu == "🛒 VENTAS (POS)":
             st.divider()
             st.markdown(f"<h2 style='color:#16a34a; text-align:center;'>TOTAL: S/. {total_venta:.2f}</h2>", unsafe_allow_html=True)
             pago = st.selectbox("Medio de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
-            doc = st.selectbox("Comprobante a emitir", ["Ticket de Venta", "Boleta Electrónica"])
+            doc = st.selectbox("Comprobante a emitir", ["Ticket de Venta", "Boleta Electrónica", "Ticket Interno"])
             
             if st.button("🏁 PROCESAR PAGO", type="primary"):
                 exito_pago = False
@@ -221,7 +218,7 @@ if menu == "🛒 VENTAS (POS)":
                 except Exception as e: st.error(ERROR_ADMIN)
                 if exito_pago: st.rerun() 
         
-        # --- TICKET LIMPIO ---
+        # --- TICKET ---
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
@@ -237,17 +234,39 @@ if menu == "🛒 VENTAS (POS)":
                     --------------------------------<br>
                 """
                 
-                for it in tk['items']:
-                    ticket_html += f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br><br>"
-                
-                ticket_html += f"""
-                    --------------------------------<br>
-                    <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
-                    MÉTODO: {tk['pago']}<br>
-                    --------------------------------<br>
-                    <center>¡Gracias por su compra!</center>
-                </div>
-                """
+                if tk['doc'] == "Ticket Interno":
+                    ticket_html += "<b>RESUMEN DE UTILIDADES:</b><br><br>"
+                    total_costo = 0
+                    for it in tk['items']:
+                        costo_sub = it['costo'] * it['cant']
+                        venta_sub = it['precio'] * it['cant']
+                        utilidad = venta_sub - costo_sub
+                        total_costo += costo_sub
+                        
+                        ticket_html += f"<b>{it['nombre'][:20]}</b> (x{it['cant']})<br> Costo: S/. {costo_sub:.2f} | Venta: S/. {venta_sub:.2f} <br> <span style='color:green'>Ganancia: S/. {utilidad:.2f}</span><br><br>"
+                    
+                    ganancia_total = tk['total'] - total_costo
+                    ticket_html += f"""
+                        --------------------------------<br>
+                        <b>VENTA TOTAL: S/. {tk['total']:.2f}</b><br>
+                        COSTO INVERSIÓN: S/. {total_costo:.2f}<br>
+                        <b>UTILIDAD NETA: S/. {ganancia_total:.2f}</b><br>
+                        MÉTODO: {tk['pago']}<br>
+                        --------------------------------<br>
+                    </div>
+                    """
+                else:
+                    for it in tk['items']:
+                        ticket_html += f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br><br>"
+                    
+                    ticket_html += f"""
+                        --------------------------------<br>
+                        <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
+                        MÉTODO: {tk['pago']}<br>
+                        --------------------------------<br>
+                        <center>¡Gracias por su compra!</center>
+                    </div>
+                    """
                 
                 st.markdown(ticket_html, unsafe_allow_html=True)
 

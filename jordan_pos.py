@@ -27,6 +27,11 @@ st.markdown("""
     .stButton>button { border-radius: 6px; font-weight: bold; height: 3.5em; width: 100%; }
     .resumen-duplicado { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; }
     .info-caja { background-color: #e0f2fe; color: #0369a1; padding: 15px; border-radius: 8px; border: 1px solid #bae6fd; margin-bottom: 15px; font-weight: 500;}
+    .metric-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center;}
+    .metric-title { font-size: 14px; color: #64748b; font-weight: 600; text-transform: uppercase;}
+    .metric-value { font-size: 24px; font-weight: 800; color: #0f172a;}
+    .metric-green { color: #16a34a; }
+    .metric-red { color: #dc2626; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -94,7 +99,7 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.9</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.0</div>', unsafe_allow_html=True)
 
 # --- 6. SISTEMA DE LOGIN Y MENÚ DINÁMICO ---
 st.sidebar.markdown("### 🏢 Panel de Control")
@@ -274,7 +279,6 @@ if menu == "🛒 VENTAS (POS)":
 # ==========================================
 elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
     st.subheader("Gestión de Inventario")
-    # NUEVO: Pestaña 4 para Registro de Mermas
     t1, t2, t3, t4 = st.tabs(["➕ Ingreso", "⚙️ Configuración", "📋 Inventario General", "📉 Registro de Mermas"])
     
     with t1:
@@ -445,9 +449,8 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
         except Exception as e: st.error(ERROR_ADMIN)
         
     with t4:
-        # NUEVA PESTAÑA: HISTORIAL DE MERMAS
         st.write("### 📉 Historial de Mermas y Pérdidas")
-        st.info("Aquí puedes ver el recuento de todo el inventario dañado o extraviado y su impacto en el capital.")
+        st.info("Recuento de todo el inventario dañado o extraviado y su impacto en el capital.")
         try:
             mermas_db = supabase.table("mermas").select("*, productos(nombre)").execute()
             if mermas_db.data:
@@ -468,7 +471,7 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
             st.error(ERROR_ADMIN)
 
 # ==========================================
-# 🔄 MÓDULO 3: DEVOLUCIONES (BÚSQUEDA HÍBRIDA)
+# 🔄 MÓDULO 3: DEVOLUCIONES (BÚSQUEDA HÍBRIDA + PRECIO)
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones de Clientes")
@@ -486,7 +489,6 @@ elif menu == "🔄 DEVOLUCIONES":
     
     if search_dev:
         if "AJ-" in search_dev.upper():
-            # 1. BÚSQUEDA POR TICKET
             try:
                 v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", search_dev.upper()).execute()
                 if v_cab.data:
@@ -504,36 +506,39 @@ elif menu == "🔄 DEVOLUCIONES":
                                 st.session_state.iny_dev_cod = "" 
                                 exito_dev = True
                             except Exception as e: st.error(ERROR_ADMIN)
-                            if exito_dev: st.success("✅ Dinero descontado y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
+                            if exito_dev: st.success("✅ Dinero descontado de caja y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
                 else: st.warning("⚠️ Ticket no encontrado en el sistema.")
             except Exception as e: st.error(ERROR_ADMIN)
             
         else:
-            # 2. BÚSQUEDA DIRECTA POR PRODUCTO (ESCÁNER O TECLADO)
             try:
                 p_db = supabase.table("productos").select("*").eq("codigo_barras", search_dev).execute()
                 if p_db.data:
                     p = p_db.data[0]
-                    st.markdown(f"<div class='info-caja'>📦 Producto detectado: <b>{p['nombre']}</b><br>Precio actual en tienda: S/. {p['precio_lista']}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='info-caja'>📦 Producto detectado: <b>{p['nombre']}</b><br>Precio lista: S/. {p['precio_lista']}</div>", unsafe_allow_html=True)
                     
                     with st.form("form_dev_libre", clear_on_submit=True):
-                        dev_cant = st.number_input("Cantidad física a regresar a vitrina", min_value=1, step=1)
+                        col_f1, col_f2 = st.columns(2)
+                        dev_cant = col_f1.number_input("Cantidad a regresar a vitrina", min_value=1, step=1)
+                        # NUEVO: Control exacto de dinero devuelto al cliente
+                        dinero_reembolsado = col_f2.number_input("Dinero devuelto al cliente por UND. (S/.)", value=float(p['precio_lista']), min_value=0.0, step=0.5)
+                        
                         motivo_dev = st.text_input("Motivo de la devolución del cliente (Obligatorio)")
                         
-                        if st.form_submit_button("🔁 EJECUTAR DEVOLUCIÓN AL INVENTARIO", type="primary"):
+                        if st.form_submit_button("🔁 EJECUTAR DEVOLUCIÓN (DESCONTAR DE CAJA)", type="primary"):
                             exito_dl = False
                             if motivo_dev:
                                 try:
-                                    # Subir stock
                                     new_stock = p['stock_actual'] + dev_cant
                                     supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", p['codigo_barras']).execute()
                                     
-                                    # Registrar en tabla devoluciones
+                                    # Registramos exactamente cuánto efectivo salió de la caja
+                                    total_reembolso = dev_cant * dinero_reembolsado
                                     supabase.table("devoluciones").insert({
                                         "producto_id": p['codigo_barras'],
                                         "cantidad": dev_cant,
                                         "motivo": motivo_dev,
-                                        "dinero_devuelto": dev_cant * float(p['precio_lista']),
+                                        "dinero_devuelto": total_reembolso,
                                         "estado_producto": "Vuelve a tienda"
                                     }).execute()
                                     
@@ -544,14 +549,14 @@ elif menu == "🔄 DEVOLUCIONES":
                                 st.warning("⚠️ Debes escribir el motivo por el cual el cliente devolvió el producto.")
                             
                             if exito_dl:
-                                st.success(f"✅ Se retornaron {dev_cant} unidades de {p['nombre']} a vitrina.")
-                                time.sleep(1.5); st.rerun()
+                                st.success(f"✅ Se retornaron {dev_cant} unidades a vitrina y se descontó S/. {total_reembolso} de la caja del día.")
+                                time.sleep(2); st.rerun()
                 else:
-                    st.warning("⚠️ El código ingresado no corresponde a ningún producto ni a ningún ticket válido.")
+                    st.warning("⚠️ El código ingresado no corresponde a ningún producto.")
             except Exception as e: st.error(ERROR_ADMIN)
 
 # ==========================================
-# ⚠️ MÓDULO 4: MERMAS Y DAÑOS (CON CONFIRMACIÓN VISUAL)
+# ⚠️ MÓDULO 4: MERMAS Y DAÑOS
 # ==========================================
 elif menu == "⚠️ MERMAS/DAÑOS":
     st.subheader("Dar de Baja Productos Dañados")
@@ -567,13 +572,11 @@ elif menu == "⚠️ MERMAS/DAÑOS":
 
     m_cod = st.text_input("Código de Barras del Producto Dañado", value=st.session_state.iny_merma_cod)
     
-    # NUEVO: BÚSQUEDA PREVIA PARA MOSTRAR DETALLES DE LA MERMA
     if m_cod:
         try:
             p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", m_cod).execute()
             if p_inf.data:
                 p_merma = p_inf.data[0]
-                # Mostrar Tarjeta de Confirmación
                 st.markdown(f"<div class='info-caja'>🛑 <b>A PUNTO DE DAR DE BAJA:</b> {p_merma['nombre']}<br>Tienes <b>{p_merma['stock_actual']}</b> unidades en tienda.<br>Cada unidad dañada te cuesta <b>S/. {p_merma['costo_compra']}</b> de capital.</div>", unsafe_allow_html=True)
                 
                 with st.form("form_merma", clear_on_submit=True):
@@ -600,45 +603,72 @@ elif menu == "⚠️ MERMAS/DAÑOS":
             st.error(ERROR_ADMIN)
 
 # ==========================================
-# 📊 MÓDULO 5: REPORTES (SOLO ADMIN)
+# 📊 MÓDULO 5: REPORTES (CUENTAS CLARAS)
 # ==========================================
 elif menu == "📊 REPORTES" and st.session_state.admin_auth:
-    st.subheader("Centro de Análisis Financiero")
+    st.subheader("Auditoría de Caja y Cuentas Claras")
     try:
+        # Extraemos toda la información financiera
         detalles = supabase.table("ventas_detalle").select("*, productos(nombre, costo_compra), ventas_cabecera(created_at, ticket_numero)").execute()
+        devs = supabase.table("devoluciones").select("*").execute()
+        mermas = supabase.table("mermas").select("*").execute()
+        
+        # 1. Calcular Totales
+        total_ventas_brutas = 0.0
+        total_costo_vendido = 0.0
+        total_devoluciones = 0.0
+        total_perdida_mermas = 0.0
         
         if detalles.data:
             df_rep = pd.DataFrame(detalles.data)
+            df_rep['Costo Unitario'] = df_rep['productos'].apply(lambda x: float(x['costo_compra']) if isinstance(x, dict) and x.get('costo_compra') else 0.0)
+            df_rep['Costo Total'] = df_rep['Costo Unitario'] * df_rep['cantidad']
             
+            total_ventas_brutas = df_rep['subtotal'].sum()
+            total_costo_vendido = df_rep['Costo Total'].sum()
+            
+        if devs.data:
+            df_devs = pd.DataFrame(devs.data)
+            total_devoluciones = df_devs['dinero_devuelto'].sum()
+            
+        if mermas.data:
+            df_mer = pd.DataFrame(mermas.data)
+            total_perdida_mermas = df_mer['perdida_monetaria'].sum()
+            
+        # MATEMÁTICA ESTRICTA DE CAJA Y UTILIDAD
+        caja_neta_real = total_ventas_brutas - total_devoluciones
+        ganancia_neta_real = caja_neta_real - total_costo_vendido - total_perdida_mermas
+        
+        # 2. Mostrar Paneles Gerenciales
+        st.markdown("##### 💵 Cuadre de Efectivo Diario")
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Brutas</div><div class='metric-value'>S/. {total_ventas_brutas:.2f}</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero Devuelto</div><div class='metric-value metric-red'>- S/. {total_devoluciones:.2f}</div></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='metric-box'><div class='metric-title'>Caja Neto (Dinero Físico)</div><div class='metric-value metric-green'>S/. {caja_neta_real:.2f}</div></div>", unsafe_allow_html=True)
+        
+        st.write("")
+        st.markdown("##### 📈 Rendimiento del Negocio (Utilidad)")
+        c4, c5 = st.columns(2)
+        c4.markdown(f"<div class='metric-box'><div class='metric-title'>Pérdidas por Merma</div><div class='metric-value metric-red'>- S/. {total_perdida_mermas:.2f}</div></div>", unsafe_allow_html=True)
+        c5.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value metric-green'>S/. {ganancia_neta_real:.2f}</div></div>", unsafe_allow_html=True)
+        
+        st.divider()
+        st.write("### 📝 Detalle de Ventas (Ítem por Ítem)")
+        if detalles.data:
             df_rep['Ticket'] = df_rep['ventas_cabecera'].apply(lambda x: x['ticket_numero'] if isinstance(x, dict) else 'N/A')
             df_rep['Fecha'] = df_rep['ventas_cabecera'].apply(lambda x: pd.to_datetime(x['created_at']).strftime('%d/%m/%Y %H:%M') if isinstance(x, dict) else 'N/A')
             df_rep['Producto'] = df_rep['productos'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'Desconocido')
-            df_rep['Costo Unitario'] = df_rep['productos'].apply(lambda x: float(x['costo_compra']) if isinstance(x, dict) and x.get('costo_compra') else 0.0)
+            df_rep['Ganancia Bruta'] = df_rep['subtotal'] - df_rep['Costo Total']
             
-            df_rep['Cantidad'] = df_rep['cantidad']
-            df_rep['Precio Venta (Unid)'] = df_rep['precio_unitario']
-            df_rep['Total Venta'] = df_rep['subtotal']
-            df_rep['Costo Total'] = df_rep['Costo Unitario'] * df_rep['Cantidad']
-            df_rep['Ganancia Pura'] = df_rep['Total Venta'] - df_rep['Costo Total']
+            df_show = df_rep[['Fecha', 'Ticket', 'Producto', 'cantidad', 'precio_unitario', 'subtotal', 'Ganancia Bruta']]
+            df_show.columns = ['Fecha', 'Ticket', 'Producto', 'Cant.', 'Venta Unit. (S/.)', 'Ingreso Total (S/.)', 'Ganancia (S/.)']
             
-            total_vendido = df_rep['Total Venta'].sum()
-            total_ganancia = df_rep['Ganancia Pura'].sum()
-            
-            m1, m2 = st.columns(2)
-            m1.metric("💰 Ingresos Totales Brutos", f"S/. {total_vendido:.2f}")
-            m2.metric("📈 Utilidad Neta (Ganancia Pura)", f"S/. {total_ganancia:.2f}")
-            
-            st.divider()
-            st.write("### 📝 Detalle Ítem por Ítem")
-            
-            df_show = df_rep[['Fecha', 'Ticket', 'Producto', 'Cantidad', 'Precio Venta (Unid)', 'Total Venta', 'Ganancia Pura']]
-            
-            for col in ['Precio Venta (Unid)', 'Total Venta', 'Ganancia Pura']:
+            for col in ['Venta Unit. (S/.)', 'Ingreso Total (S/.)', 'Ganancia (S/.)']:
                 df_show[col] = df_show[col].apply(lambda x: f"S/. {x:.2f}")
                 
             st.dataframe(df_show, use_container_width=True)
-            
         else:
-            st.info("📭 Aún no se han registrado ventas para generar reportes.")
+            st.info("No hay ventas registradas aún.")
+            
     except Exception as e:
         st.error(f"{ERROR_ADMIN}")

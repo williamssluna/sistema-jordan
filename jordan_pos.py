@@ -26,6 +26,7 @@ st.markdown("""
     .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #333; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2; font-size: 14px; }
     .stButton>button { border-radius: 6px; font-weight: bold; height: 3.5em; width: 100%; }
     .resumen-duplicado { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; border: 1px solid #ffeeba; }
+    .info-caja { background-color: #e0f2fe; color: #0369a1; padding: 15px; border-radius: 8px; border: 1px solid #bae6fd; margin-bottom: 15px; font-weight: 500;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -34,7 +35,7 @@ keys_to_init = {
     'carrito': [], 'last_ticket': None,
     'iny_alm_cod': "", 'iny_dev_cod': "", 'iny_merma_cod': "",
     'cam_v_key': 0, 'cam_a_key': 0, 'cam_d_key': 0, 'cam_m_key': 0,
-    'admin_auth': False  # Candado de Seguridad
+    'admin_auth': False
 }
 for k, v in keys_to_init.items():
     if k not in st.session_state: st.session_state[k] = v
@@ -68,7 +69,6 @@ def load_data(table):
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except: return pd.DataFrame()
 
-# NÚCLEO DE VENTAS: Función unificada para agregar al carrito
 def procesar_codigo_venta(code):
     exito = False
     try:
@@ -94,7 +94,7 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.8</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.9</div>', unsafe_allow_html=True)
 
 # --- 6. SISTEMA DE LOGIN Y MENÚ DINÁMICO ---
 st.sidebar.markdown("### 🏢 Panel de Control")
@@ -108,7 +108,6 @@ menu = st.sidebar.radio("SISTEMA DE GESTIÓN", menu_options)
 
 st.sidebar.divider()
 
-# Módulo de Autenticación
 if not st.session_state.admin_auth:
     st.sidebar.markdown("#### 🔐 Acceso Privado")
     usuario = st.sidebar.text_input("Usuario")
@@ -275,7 +274,8 @@ if menu == "🛒 VENTAS (POS)":
 # ==========================================
 elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
     st.subheader("Gestión de Inventario")
-    t1, t2, t3 = st.tabs(["➕ Ingresar Mercadería", "⚙️ Configurar Listas", "📋 Inventario General"])
+    # NUEVO: Pestaña 4 para Registro de Mermas
+    t1, t2, t3, t4 = st.tabs(["➕ Ingreso", "⚙️ Configuración", "📋 Inventario General", "📉 Registro de Mermas"])
     
     with t1:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -443,13 +443,36 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
             else: 
                 st.info("📭 Aún no se han registrado productos en el inventario.")
         except Exception as e: st.error(ERROR_ADMIN)
+        
+    with t4:
+        # NUEVA PESTAÑA: HISTORIAL DE MERMAS
+        st.write("### 📉 Historial de Mermas y Pérdidas")
+        st.info("Aquí puedes ver el recuento de todo el inventario dañado o extraviado y su impacto en el capital.")
+        try:
+            mermas_db = supabase.table("mermas").select("*, productos(nombre)").execute()
+            if mermas_db.data:
+                df_m = pd.DataFrame(mermas_db.data)
+                df_m['Producto'] = df_m['productos'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
+                df_m['Fecha'] = pd.to_datetime(df_m['created_at']).dt.strftime('%d/%m/%Y %H:%M')
+                
+                df_show_m = df_m[['Fecha', 'Producto', 'cantidad', 'motivo', 'perdida_monetaria']]
+                df_show_m.columns = ['Fecha', 'Producto', 'Cantidad Pérdida', 'Motivo del Daño', 'Impacto Monetario (S/.)']
+                
+                st.dataframe(df_show_m, use_container_width=True)
+                
+                total_perdida = df_m['perdida_monetaria'].sum()
+                st.markdown(f"<h3 style='color:#dc2626;'>Impacto Total al Capital: S/. {total_perdida:.2f}</h3>", unsafe_allow_html=True)
+            else:
+                st.success("✅ ¡Excelente! Aún no se han registrado mermas o pérdidas de inventario.")
+        except Exception as e:
+            st.error(ERROR_ADMIN)
 
 # ==========================================
-# 🔄 MÓDULO 3: DEVOLUCIONES
+# 🔄 MÓDULO 3: DEVOLUCIONES (BÚSQUEDA HÍBRIDA)
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones de Clientes")
-    with st.expander("📷 ESCANEAR TICKET O PRODUCTO", expanded=False):
+    with st.expander("📷 ESCANEAR PRODUCTO A DEVOLVER", expanded=False):
         img_dev = st.camera_input("Scanner Devolución", key=f"cam_dev_{st.session_state.cam_d_key}")
         if img_dev:
             code_dev = scan_pos(img_dev)
@@ -459,31 +482,76 @@ elif menu == "🔄 DEVOLUCIONES":
                 st.rerun()
             else: st.warning("⚠️ No se detectó código. Intenta enfocar mejor.")
 
-    tick = st.text_input("Ingresa el Número de Ticket o Código de Producto", value=st.session_state.iny_dev_cod)
-    if tick:
-        try:
-            v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", tick).execute()
-            if v_cab.data:
-                st.success(f"✅ Ticket encontrado. Método original: {v_cab.data[0]['metodo_pago']}")
-                v_det = supabase.table("ventas_detalle").select("*, productos(nombre)").eq("venta_id", v_cab.data[0]['id']).execute()
-                for d in v_det.data:
-                    col_d1, col_d2 = st.columns([3, 1])
-                    col_d1.write(f"**{d['productos']['nombre']}** - Compró: {d['cantidad']} ud.")
-                    if col_d2.button("Ejecutar Devolución", key=f"dev_{d['id']}"):
-                        exito_dev = False
-                        try:
-                            p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
-                            supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
-                            supabase.table("devoluciones").insert({"producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
-                            st.session_state.iny_dev_cod = "" 
-                            exito_dev = True
-                        except Exception as e: st.error(ERROR_ADMIN)
-                        if exito_dev: st.success("✅ Dinero descontado y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
-            else: st.warning("⚠️ Ticket no encontrado en el sistema. Verifica el número.")
-        except Exception as e: st.error(ERROR_ADMIN)
+    search_dev = st.text_input("Ingresa el Número de Ticket (AJ-...) o el Código de Barras del producto", value=st.session_state.iny_dev_cod)
+    
+    if search_dev:
+        if "AJ-" in search_dev.upper():
+            # 1. BÚSQUEDA POR TICKET
+            try:
+                v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", search_dev.upper()).execute()
+                if v_cab.data:
+                    st.success(f"✅ Ticket encontrado. Método original: {v_cab.data[0]['metodo_pago']}")
+                    v_det = supabase.table("ventas_detalle").select("*, productos(nombre)").eq("venta_id", v_cab.data[0]['id']).execute()
+                    for d in v_det.data:
+                        col_d1, col_d2 = st.columns([3, 1])
+                        col_d1.write(f"**{d['productos']['nombre']}** - Compró: {d['cantidad']} ud.")
+                        if col_d2.button("Ejecutar Devolución", key=f"dev_{d['id']}"):
+                            exito_dev = False
+                            try:
+                                p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
+                                supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
+                                supabase.table("devoluciones").insert({"producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución por Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
+                                st.session_state.iny_dev_cod = "" 
+                                exito_dev = True
+                            except Exception as e: st.error(ERROR_ADMIN)
+                            if exito_dev: st.success("✅ Dinero descontado y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
+                else: st.warning("⚠️ Ticket no encontrado en el sistema.")
+            except Exception as e: st.error(ERROR_ADMIN)
+            
+        else:
+            # 2. BÚSQUEDA DIRECTA POR PRODUCTO (ESCÁNER O TECLADO)
+            try:
+                p_db = supabase.table("productos").select("*").eq("codigo_barras", search_dev).execute()
+                if p_db.data:
+                    p = p_db.data[0]
+                    st.markdown(f"<div class='info-caja'>📦 Producto detectado: <b>{p['nombre']}</b><br>Precio actual en tienda: S/. {p['precio_lista']}</div>", unsafe_allow_html=True)
+                    
+                    with st.form("form_dev_libre", clear_on_submit=True):
+                        dev_cant = st.number_input("Cantidad física a regresar a vitrina", min_value=1, step=1)
+                        motivo_dev = st.text_input("Motivo de la devolución del cliente (Obligatorio)")
+                        
+                        if st.form_submit_button("🔁 EJECUTAR DEVOLUCIÓN AL INVENTARIO", type="primary"):
+                            exito_dl = False
+                            if motivo_dev:
+                                try:
+                                    # Subir stock
+                                    new_stock = p['stock_actual'] + dev_cant
+                                    supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", p['codigo_barras']).execute()
+                                    
+                                    # Registrar en tabla devoluciones
+                                    supabase.table("devoluciones").insert({
+                                        "producto_id": p['codigo_barras'],
+                                        "cantidad": dev_cant,
+                                        "motivo": motivo_dev,
+                                        "dinero_devuelto": dev_cant * float(p['precio_lista']),
+                                        "estado_producto": "Vuelve a tienda"
+                                    }).execute()
+                                    
+                                    st.session_state.iny_dev_cod = ""
+                                    exito_dl = True
+                                except Exception as e: st.error(ERROR_ADMIN)
+                            else:
+                                st.warning("⚠️ Debes escribir el motivo por el cual el cliente devolvió el producto.")
+                            
+                            if exito_dl:
+                                st.success(f"✅ Se retornaron {dev_cant} unidades de {p['nombre']} a vitrina.")
+                                time.sleep(1.5); st.rerun()
+                else:
+                    st.warning("⚠️ El código ingresado no corresponde a ningún producto ni a ningún ticket válido.")
+            except Exception as e: st.error(ERROR_ADMIN)
 
 # ==========================================
-# ⚠️ MÓDULO 4: MERMAS Y DAÑOS
+# ⚠️ MÓDULO 4: MERMAS Y DAÑOS (CON CONFIRMACIÓN VISUAL)
 # ==========================================
 elif menu == "⚠️ MERMAS/DAÑOS":
     st.subheader("Dar de Baja Productos Dañados")
@@ -497,29 +565,39 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                 st.rerun()
             else: st.warning("⚠️ No se detectó código. Intenta enfocar mejor.")
 
-    with st.form("form_merma", clear_on_submit=True):
-        m_cod = st.text_input("Código de Barras del Producto Dañado", value=st.session_state.iny_merma_cod)
-        m_cant = st.number_input("Cantidad a descontar", min_value=1)
-        m_mot = st.selectbox("Motivo Exacto", ["Roto al instalar/mostrar", "Falla de Fábrica (Garantía Proveedor)", "Robo/Extravío"])
-        
-        if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA Y DESCONTAR", type="primary"):
-            exito_merma = False
-            if m_cod:
-                try:
-                    p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", m_cod).execute()
-                    if p_inf.data:
-                        if p_inf.data[0]['stock_actual'] >= m_cant:
-                            supabase.table("productos").update({"stock_actual": p_inf.data[0]['stock_actual'] - m_cant}).eq("codigo_barras", m_cod).execute()
-                            supabase.table("mermas").insert({"producto_id": m_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_inf.data[0]['costo_compra'] * m_cant}).execute()
-                            st.session_state.iny_merma_cod = "" 
-                            exito_merma = True
-                        else: st.error("❌ No puedes dar de baja más stock del que tienes.")
-                    else: st.warning("⚠️ Código de producto inválido o no existe en inventario.")
-                except Exception as e: st.error(ERROR_ADMIN)
-            else: st.warning("⚠️ Debes ingresar o escanear un código de barras.")
-            
-            if exito_merma:
-                st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
+    m_cod = st.text_input("Código de Barras del Producto Dañado", value=st.session_state.iny_merma_cod)
+    
+    # NUEVO: BÚSQUEDA PREVIA PARA MOSTRAR DETALLES DE LA MERMA
+    if m_cod:
+        try:
+            p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", m_cod).execute()
+            if p_inf.data:
+                p_merma = p_inf.data[0]
+                # Mostrar Tarjeta de Confirmación
+                st.markdown(f"<div class='info-caja'>🛑 <b>A PUNTO DE DAR DE BAJA:</b> {p_merma['nombre']}<br>Tienes <b>{p_merma['stock_actual']}</b> unidades en tienda.<br>Cada unidad dañada te cuesta <b>S/. {p_merma['costo_compra']}</b> de capital.</div>", unsafe_allow_html=True)
+                
+                with st.form("form_merma", clear_on_submit=True):
+                    m_cant = st.number_input("Cantidad a descontar y botar a la basura", min_value=1, max_value=int(p_merma['stock_actual']) if p_merma['stock_actual'] > 0 else 1)
+                    m_mot = st.selectbox("Motivo Exacto", ["Roto al instalar/mostrar", "Falla de Fábrica (Garantía Proveedor)", "Robo/Extravío"])
+                    
+                    if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA Y DESCONTAR", type="primary"):
+                        exito_merma = False
+                        if p_merma['stock_actual'] >= m_cant:
+                            try:
+                                supabase.table("productos").update({"stock_actual": p_merma['stock_actual'] - m_cant}).eq("codigo_barras", m_cod).execute()
+                                supabase.table("mermas").insert({"producto_id": m_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_merma['costo_compra'] * m_cant}).execute()
+                                st.session_state.iny_merma_cod = "" 
+                                exito_merma = True
+                            except Exception as e: st.error(ERROR_ADMIN)
+                        else: 
+                            st.error("❌ No puedes dar de baja más stock del que tienes.")
+                        
+                        if exito_merma:
+                            st.success(f"✅ Baja exitosa. Se descontaron {m_cant} unidades de tu inventario."); time.sleep(1.5); st.rerun()
+            else:
+                st.warning("⚠️ Código de producto no encontrado en el sistema.")
+        except Exception as e:
+            st.error(ERROR_ADMIN)
 
 # ==========================================
 # 📊 MÓDULO 5: REPORTES (SOLO ADMIN)

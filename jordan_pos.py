@@ -99,7 +99,7 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.1</div>', unsafe_allow_html=True)
 
 # --- 6. SISTEMA DE LOGIN Y MENÚ DINÁMICO ---
 st.sidebar.markdown("### 🏢 Panel de Control")
@@ -222,7 +222,6 @@ if menu == "🛒 VENTAS (POS)":
                 except Exception as e: st.error(ERROR_ADMIN)
                 if exito_pago: st.rerun() 
         
-        # --- TICKET ---
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
@@ -279,7 +278,7 @@ if menu == "🛒 VENTAS (POS)":
 # ==========================================
 elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
     st.subheader("Gestión de Inventario")
-    t1, t2, t3, t4 = st.tabs(["➕ Ingreso", "⚙️ Configuración", "📋 Inventario General", "📉 Registro de Mermas"])
+    t1, t2, t3, t4 = st.tabs(["➕ Ingreso", "⚙️ Configuración", "📋 Inventario", "📉 Registro de Mermas"])
     
     with t1:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -298,8 +297,8 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
                             <div class="resumen-duplicado">
                                 <b>⚠️ ESTE PRODUCTO YA EXISTE</b><br>
                                 <b>Nombre:</b> {p_ex['nombre']} | <b>Marca:</b> {m_nom} | <b>Categoría:</b> {c_nom}<br>
-                                <b>Stock:</b> {p_ex['stock_actual']} ud. | <b>Precio:</b> S/. {p_ex['precio_lista']}<br>
-                                <i>👉 Ve a 'Inventario General' para sumarle más cantidad.</i>
+                                <b>Stock Actual:</b> {p_ex['stock_actual']} ud. | <b>Precio:</b> S/. {p_ex['precio_lista']}<br>
+                                <i>👉 Ve a 'Inventario' para sumarle más cantidad.</i>
                             </div>
                             """, unsafe_allow_html=True)
                             st.session_state.cam_a_key += 1 
@@ -346,7 +345,9 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
                                 "codigo_barras": c_cod, "nombre": c_nom, 
                                 "categoria_id": cid, "marca_id": mid, "calidad": f_cal, 
                                 "costo_compra": f_costo, "precio_lista": f_venta, 
-                                "precio_minimo": f_pmin, "stock_actual": f_stock
+                                "precio_minimo": f_pmin, 
+                                "stock_actual": f_stock,
+                                "stock_inicial": f_stock  # Se registra el stock inicial también
                             }).execute()
                             
                             st.session_state.iny_alm_cod = "" 
@@ -410,15 +411,20 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
             st.markdown('</div>', unsafe_allow_html=True)
 
     with t3:
-        st.write("### 📋 Visor Transparente de Inventario")
+        st.write("### 📋 Inventario")
         try:
             prods = supabase.table("productos").select("*, categorias(nombre), marcas(nombre)").execute()
             if prods.data: 
                 df = pd.DataFrame(prods.data)
                 df['Categoría'] = df['categorias'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
                 df['Marca'] = df['marcas'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
-                df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'stock_actual', 'costo_compra', 'precio_minimo', 'precio_lista']]
-                df_show.columns = ['Código', 'Nombre', 'Categoría', 'Marca', 'Stock', 'Costo Compra (S/.)', 'Precio Mínimo (S/.)', 'Precio Sugerido (S/.)']
+                
+                # Rescate del Stock Inicial para evitar errores si la tabla es antigua
+                df['stock_inicial'] = df.apply(lambda row: row.get('stock_inicial') if pd.notnull(row.get('stock_inicial')) else row['stock_actual'], axis=1)
+
+                df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'stock_inicial', 'stock_actual', 'costo_compra', 'precio_minimo', 'precio_lista']]
+                df_show.columns = ['Código', 'Nombre', 'Categoría', 'Marca', 'Stock Inicial', 'Stock Actual', 'Costo (S/.)', 'P. Mínimo (S/.)', 'P. Venta (S/.)']
+                
                 st.dataframe(df_show, use_container_width=True)
                 
                 st.divider()
@@ -435,9 +441,14 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
                     if selected_prod != "Seleccionar...":
                         code_to_update = selected_prod.split(" - ")[0]
                         current_stock = int(df[df['codigo_barras'] == code_to_update]['stock_actual'].iloc[0])
+                        current_initial = int(df[df['codigo_barras'] == code_to_update]['stock_inicial'].iloc[0])
+                        
                         new_stock = current_stock + add_stock
+                        new_initial = current_initial + add_stock
+                        
                         try:
-                            supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", code_to_update).execute()
+                            # Se actualiza tanto el stock actual como el inicial para mantener coherencia
+                            supabase.table("productos").update({"stock_actual": new_stock, "stock_inicial": new_initial}).eq("codigo_barras", code_to_update).execute()
                             exito_re = True
                         except Exception as e: st.error(ERROR_ADMIN)
                         
@@ -471,7 +482,7 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
             st.error(ERROR_ADMIN)
 
 # ==========================================
-# 🔄 MÓDULO 3: DEVOLUCIONES (BÚSQUEDA HÍBRIDA + PRECIO)
+# 🔄 MÓDULO 3: DEVOLUCIONES
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones de Clientes")
@@ -520,7 +531,6 @@ elif menu == "🔄 DEVOLUCIONES":
                     with st.form("form_dev_libre", clear_on_submit=True):
                         col_f1, col_f2 = st.columns(2)
                         dev_cant = col_f1.number_input("Cantidad a regresar a vitrina", min_value=1, step=1)
-                        # NUEVO: Control exacto de dinero devuelto al cliente
                         dinero_reembolsado = col_f2.number_input("Dinero devuelto al cliente por UND. (S/.)", value=float(p['precio_lista']), min_value=0.0, step=0.5)
                         
                         motivo_dev = st.text_input("Motivo de la devolución del cliente (Obligatorio)")
@@ -532,7 +542,6 @@ elif menu == "🔄 DEVOLUCIONES":
                                     new_stock = p['stock_actual'] + dev_cant
                                     supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", p['codigo_barras']).execute()
                                     
-                                    # Registramos exactamente cuánto efectivo salió de la caja
                                     total_reembolso = dev_cant * dinero_reembolsado
                                     supabase.table("devoluciones").insert({
                                         "producto_id": p['codigo_barras'],
@@ -603,17 +612,15 @@ elif menu == "⚠️ MERMAS/DAÑOS":
             st.error(ERROR_ADMIN)
 
 # ==========================================
-# 📊 MÓDULO 5: REPORTES (CUENTAS CLARAS)
+# 📊 MÓDULO 5: REPORTES
 # ==========================================
 elif menu == "📊 REPORTES" and st.session_state.admin_auth:
     st.subheader("Auditoría de Caja y Cuentas Claras")
     try:
-        # Extraemos toda la información financiera
         detalles = supabase.table("ventas_detalle").select("*, productos(nombre, costo_compra), ventas_cabecera(created_at, ticket_numero)").execute()
         devs = supabase.table("devoluciones").select("*").execute()
         mermas = supabase.table("mermas").select("*").execute()
         
-        # 1. Calcular Totales
         total_ventas_brutas = 0.0
         total_costo_vendido = 0.0
         total_devoluciones = 0.0
@@ -635,11 +642,9 @@ elif menu == "📊 REPORTES" and st.session_state.admin_auth:
             df_mer = pd.DataFrame(mermas.data)
             total_perdida_mermas = df_mer['perdida_monetaria'].sum()
             
-        # MATEMÁTICA ESTRICTA DE CAJA Y UTILIDAD
         caja_neta_real = total_ventas_brutas - total_devoluciones
         ganancia_neta_real = caja_neta_real - total_costo_vendido - total_perdida_mermas
         
-        # 2. Mostrar Paneles Gerenciales
         st.markdown("##### 💵 Cuadre de Efectivo Diario")
         c1, c2, c3 = st.columns(3)
         c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Brutas</div><div class='metric-value'>S/. {total_ventas_brutas:.2f}</div></div>", unsafe_allow_html=True)

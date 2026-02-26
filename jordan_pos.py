@@ -113,17 +113,21 @@ with tabs[0]:
     with st.expander("📷 ABRIR ESCÁNER", expanded=True):
         img_v = st.camera_input("Toma la foto", key="cam_venta")
         if img_v:
-            with st.spinner("Procesando..."):
-                code = procesar_imagen_avanzado(img_v)
-                if code:
+            # LÓGICA ANTI-BUCLE
+            code = procesar_imagen_avanzado(img_v)
+            if code:
+                if code != st.session_state.input_v:
                     st.session_state.input_v = code 
                     st.rerun()
                 else:
-                    st.warning("⚠️ No se detectó.")
+                    st.success(f"Detectado: {code}")
+            else:
+                st.warning("⚠️ No se detectó.")
 
     cod_input = st.text_input("Código de Barras", key="input_v")
 
-    if st.button("🧹 Limpiar"):
+    # SOLUCIÓN ERROR: Agregamos key="btn_limpiar_vender" para que sea único
+    if st.button("🧹 Limpiar", key="btn_limpiar_vender"):
         st.session_state.input_v = ""
         st.rerun()
 
@@ -146,7 +150,7 @@ with tabs[0]:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# PESTAÑA 2: AGREGAR (LIBERADA DEL FORMULARIO)
+# PESTAÑA 2: AGREGAR
 # ==================================================
 with tabs[1]:
     if check_login("tab_agregar"):
@@ -157,18 +161,21 @@ with tabs[1]:
             st.session_state.admin_login = False
             st.rerun()
 
-        # 1. ESCÁNER
+        # 1. ESCÁNER (CON ANTI-BUCLE)
         with st.expander("📷 ABRIR ESCÁNER", expanded=True):
             img_a = st.camera_input("Escanear nuevo", key="cam_add")
             if img_a:
                 code_a = procesar_imagen_avanzado(img_a)
                 if code_a:
-                    st.session_state.scan_agregar = code_a
-                    st.success(f"¡Capturado: {code_a}!")
-                    st.rerun()
+                    # SOLO recargamos si el código es NUEVO
+                    if code_a != st.session_state.scan_agregar:
+                        st.session_state.scan_agregar = code_a
+                        st.rerun()
+                    else:
+                        # Si es el mismo, solo mostramos el aviso (pero no recargamos, así baja al formulario)
+                        st.success(f"¡Capturado: {code_a}!")
 
-        # 2. CAMPOS LIBRES (Ya no están atrapados en st.form)
-        # Esto permite que el código se actualice al instante
+        # 2. CAMPOS (Conectados a memoria)
         st.write("---")
         c_barras = st.text_input("Código de Barras", key="scan_agregar") 
         nombre = st.text_input("Nombre del Producto")
@@ -183,7 +190,6 @@ with tabs[1]:
         
         st.markdown('<span class="btn-azul">', unsafe_allow_html=True)
         
-        # El botón ahora guarda directamente
         if st.button("💾 GUARDAR PRODUCTO"):
             if c_barras and nombre:
                 try:
@@ -193,7 +199,7 @@ with tabs[1]:
                         "precio_lista": p_venta, "precio_minimo": p_min, "stock_actual": stock
                     }).execute()
                     st.success(f"✅ {nombre} agregado.")
-                    st.session_state.scan_agregar = "" # Limpiar
+                    st.session_state.scan_agregar = "" 
                     time.sleep(1.5)
                     st.rerun()
                 except Exception as e:
@@ -204,7 +210,8 @@ with tabs[1]:
                 st.warning("Falta nombre o código.")
         st.markdown('</span>', unsafe_allow_html=True)
         
-        if st.button("🧹 Limpiar"):
+        # SOLUCIÓN ERROR: Agregamos key="btn_limpiar_agregar" para que sea único
+        if st.button("🧹 Limpiar", key="btn_limpiar_agregar"):
             st.session_state.scan_agregar = ""
             st.rerun()
             
@@ -249,4 +256,3 @@ with tabs[2]:
                 st.dataframe(df.tail(10), use_container_width=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
-

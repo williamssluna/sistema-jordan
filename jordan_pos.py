@@ -23,8 +23,6 @@ st.set_page_config(page_title="JORDAN POS PRO", layout="centered", page_icon="�
 st.markdown("""
     <style>
     .stApp { background-color: #f4f6f9; }
-    
-    /* TARJETAS */
     .css-card { 
         background-color: white; 
         padding: 25px; 
@@ -33,30 +31,18 @@ st.markdown("""
         margin-bottom: 20px; 
         border-left: 5px solid #007bff;
     }
-    
-    /* BOTONES */
     .stButton>button { width: 100%; height: 60px; font-size: 18px; border-radius: 8px; font-weight: 700; transition: 0.2s; }
     .stButton>button:hover { transform: scale(1.02); }
     
-    /* TICKET DE VENTA ESTILO FACTURA */
+    /* TICKET */
     .ticket-box {
         background-color: #fff;
         border: 1px solid #ddd;
         padding: 20px;
-        border-radius: 0px;
         text-align: center;
         margin-bottom: 20px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         position: relative;
-    }
-    .ticket-box::before { /* Efecto de papel cortado */
-        content: "";
-        position: absolute;
-        bottom: -5px;
-        left: 0;
-        width: 100%;
-        height: 10px;
-        background: radial-gradient(circle, transparent, transparent 50%, #fff 50%, #fff 100%) -7px -8px / 16px 16px repeat-x;
     }
     .ticket-header { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 5px; text-transform: uppercase; border-bottom: 2px dashed #333; padding-bottom: 10px; }
     .ticket-item { font-size: 24px; color: #000; font-weight: 800; margin: 15px 0; }
@@ -66,7 +52,6 @@ st.markdown("""
     /* ALERTAS */
     .alert-danger { background-color: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; border: 1px solid #f5c6cb; font-weight: bold; text-align: center; }
     .alert-warning { background-color: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; border: 1px solid #ffeeba; font-weight: bold; text-align: center; }
-    .margin-badge { background-color: #e2e3e5; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; color: #333; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -77,7 +62,7 @@ if 'scan_agregar' not in st.session_state: st.session_state.scan_agregar = ""
 if 'exito_agregar' not in st.session_state: st.session_state.exito_agregar = False
 if 'ticket_final' not in st.session_state: st.session_state.ticket_final = None
 
-# --- 4. FUNCIONES INTELIGENTES ---
+# --- 4. FUNCIONES ---
 def procesar_imagen_avanzado(uploaded_file):
     if uploaded_file is None: return None
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -99,9 +84,7 @@ def procesar_imagen_avanzado(uploaded_file):
 
 def ejecutar_venta(codigo, stock_actual, nombre_prod):
     try:
-        # Leemos el precio real del input
         precio_real = st.session_state.precio_final_input
-        
         datos_venta = {
             "producto_id": codigo, 
             "precio_final_vendido": precio_real,
@@ -161,25 +144,22 @@ st.title("🛍️ Accesorios Jordan POS")
 tabs = st.tabs(["🛒 PUNTO DE VENTA", "📦 REGISTRAR STOCK", "📊 REPORTES PRO"])
 
 # ==================================================
-# PESTAÑA 1: VENTA PROFESIONAL (CON VALIDACIÓN)
+# PESTAÑA 1: VENTA
 # ==================================================
 with tabs[0]:
-    # TICKET FINAL
     if st.session_state.ticket_final:
         t = st.session_state.ticket_final
         st.balloons()
         
         st.markdown(f"""
         <div class="ticket-box">
-            <div class="ticket-header">Accesorios Jordan<br>Comprobante de Pago</div>
+            <div class="ticket-header">Accesorios Jordan<br>Comprobante</div>
             <div class="ticket-item">{t['nombre']}</div>
             <div class="ticket-price">S/. {t['precio']:.2f}</div>
             <div class="ticket-info">
                 <span>📅 {t['fecha']}</span>
                 <span>⏰ {t['hora']}</span>
             </div>
-            <br>
-            <div style="font-size:12px; font-style:italic;">¡Gracias por su preferencia!</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -187,12 +167,8 @@ with tabs[0]:
             st.rerun()
             
     else:
-        # INTERFAZ DE VENTA
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         
-        col_cam, col_info = st.columns([1, 2])
-        
-        # ESCÁNER COMPACTO
         with st.expander("📷 ACTIVAR CÁMARA", expanded=True):
             img_v = st.camera_input("Escáner", key="cam_venta", label_visibility="hidden")
             if img_v:
@@ -214,8 +190,6 @@ with tabs[0]:
             
             if res.data:
                 p = res.data[0]
-                
-                # --- VISUALIZACIÓN DE PRODUCTO ---
                 st.markdown(f"""
                 <div style="background-color:#e9ecef; padding:15px; border-radius:10px; margin-top:10px;">
                     <h3 style="margin:0; color:#333;">📦 {p['nombre']}</h3>
@@ -223,7 +197,6 @@ with tabs[0]:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- LÓGICA DE PRECIOS Y ALERTAS ---
                 costo_compra = float(p['costo_compra'])
                 precio_min = float(p['precio_minimo'])
                 precio_sugerido = float(p['precio_lista'])
@@ -232,80 +205,43 @@ with tabs[0]:
                 col_p1, col_p2 = st.columns(2)
                 col_p1.metric("Precio Sugerido", f"S/. {precio_sugerido:.2f}")
                 
-                # INPUT DEL PRECIO REAL
-                precio_final = st.number_input(
-                    "💵 PRECIO FINAL DE VENTA (S/.)", 
-                    value=precio_sugerido, 
-                    step=0.5, 
-                    key="precio_final_input"
-                )
+                precio_final = st.number_input("💵 PRECIO FINAL (S/.)", value=precio_sugerido, step=0.5, key="precio_final_input")
                 
-                # --- EL CEREBRO DE LA VENTA (VALIDACIONES) ---
                 venta_permitida = True
-                
-                # 1. Validación de PÉRDIDA (Bloqueo)
                 if precio_final < costo_compra:
-                    st.markdown(f"""
-                    <div class="alert-danger">
-                        ⛔ ¡ALTO! VENTA BLOQUEADA <br>
-                        Estás vendiendo por debajo del costo (S/. {costo_compra:.2f}).<br>
-                        Esta operación generaría pérdidas.
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f'<div class="alert-danger">⛔ VENTA BLOQUEADA: Precio menor al costo (S/. {costo_compra:.2f})</div>', unsafe_allow_html=True)
                     venta_permitida = False
-                
-                # 2. Validación de MARGEN BAJO (Alerta)
                 elif precio_final < precio_min:
-                    st.markdown(f"""
-                    <div class="alert-warning">
-                        ⚠️ ADVERTENCIA: PRECIO BAJO <br>
-                        Estás vendiendo por debajo del mínimo recomendado (S/. {precio_min:.2f}).<br>
-                        El margen de ganancia es mínimo.
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f'<div class="alert-warning">⚠️ PRECIO BAJO: Menor al mínimo (S/. {precio_min:.2f})</div>', unsafe_allow_html=True)
                 
-                # 3. Validación de STOCK
                 if p['stock_actual'] <= 0:
-                    st.error("❌ NO HAY STOCK DISPONIBLE")
+                    st.error("❌ SIN STOCK")
                     venta_permitida = False
 
                 st.write("")
-                
-                # BOTÓN DE VENTA (Solo aparece si está permitido)
                 if venta_permitida:
-                    # Calculamos ganancia proyectada para mostrarla (visual)
-                    ganancia_proyectada = precio_final - costo_compra
-                    if ganancia_proyectada > 0:
-                        st.caption(f"📈 Ganancia estimada en esta venta: S/. {ganancia_proyectada:.2f}")
-                        
-                    st.button(
-                        "✅ CONFIRMAR Y IMPRIMIR TICKET", 
-                        on_click=ejecutar_venta, 
-                        args=(cod_limpio, p['stock_actual'], p['nombre']),
-                        type="primary"
-                    )
+                    st.button("✅ CONFIRMAR", on_click=ejecutar_venta, args=(cod_limpio, p['stock_actual'], p['nombre']), type="primary")
             else:
                 st.warning(f"Producto no encontrado: {cod_limpio}")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# PESTAÑA 2: AGREGAR (INVENTARIO PROFESIONAL)
+# PESTAÑA 2: AGREGAR
 # ==================================================
 with tabs[1]:
     if check_login("tab_agregar"):
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         c_head, c_lock = st.columns([3,1])
-        c_head.subheader("📦 Ingreso de Mercadería")
+        c_head.subheader("📦 Ingreso")
         if c_lock.button("🔒 Salir", key="logout_1"):
             st.session_state.admin_login = False
             st.rerun()
             
         if st.session_state.exito_agregar:
-            st.success("✅ ¡Producto registrado exitosamente en Inventario!")
+            st.success("✅ ¡Registrado!")
             st.session_state.exito_agregar = False
 
-        # ESCÁNER
         with st.expander("📷 ESCANEAR CÓDIGO NUEVO", expanded=True):
             img_a = st.camera_input("Scan", key="cam_add", label_visibility="hidden")
             if img_a:
@@ -317,26 +253,20 @@ with tabs[1]:
                     else:
                         st.success(f"Capturado: {code_a}")
 
-        # FORMULARIO PROFESIONAL
-        st.write("#### 1. Datos del Producto")
-        c_barras = st.text_input("Código de Barras (Obligatorio)", key="scan_agregar", placeholder="Escanea o escribe...") 
-        nombre = st.text_input("Descripción / Nombre del Producto", placeholder="Ej. Audífonos Bluetooth X15")
-        
-        st.write("#### 2. Costos y Precios (Análisis Financiero)")
+        c_barras = st.text_input("Código de Barras", key="scan_agregar", placeholder="Escanea o escribe...") 
+        nombre = st.text_input("Nombre del Producto", placeholder="Ej. Audífonos...")
         
         c1, c2 = st.columns(2)
-        costo = c1.number_input("🔴 Costo Proveedor (S/.)", min_value=0.0, step=0.5, help="Lo que te costó comprarlo")
-        stock = c2.number_input("📦 Stock Inicial (Unidades)", min_value=1, step=1)
+        costo = c1.number_input("🔴 Costo (S/.)", min_value=0.0, step=0.5)
+        stock = c2.number_input("📦 Stock", min_value=1, step=1)
         
         c3, c4 = st.columns(2)
-        p_venta = c3.number_input("🟢 Precio Venta Sugerido (S/.)", min_value=0.0, step=0.5, help="Precio al público general")
-        p_min = c4.number_input("🟠 Precio Mínimo Aceptable (S/.)", min_value=0.0, step=0.5, help="Lo mínimo que aceptas para no perder")
+        p_venta = c3.number_input("🟢 Precio Venta (S/.)", min_value=0.0, step=0.5)
+        p_min = c4.number_input("🟠 Precio Mínimo (S/.)", min_value=0.0, step=0.5)
         
-        # CÁLCULO AUTOMÁTICO DE MARGEN (AYUDA VISUAL)
         if costo > 0 and p_venta > 0:
             margen = p_venta - costo
-            porcentaje = (margen / costo) * 100
-            st.info(f"📊 **Análisis:** Con estos precios, ganarás **S/. {margen:.2f}** por unidad ({porcentaje:.1f}% de rentabilidad).")
+            st.info(f"📊 Ganancia estimada: S/. {margen:.2f}")
         
         st.write("---")
         
@@ -344,17 +274,12 @@ with tabs[1]:
         with col_b1:
             if st.button("🧹 Limpiar", key="btn_limpiar_agregar", on_click=limpiar_agregar): pass
         with col_b2:
-            st.button(
-                "💾 GUARDAR EN SISTEMA", 
-                on_click=guardar_producto_nuevo, 
-                args=(c_barras, nombre, costo, stock, p_venta, p_min),
-                type="primary"
-            )
+            st.button("💾 GUARDAR", on_click=guardar_producto_nuevo, args=(c_barras, nombre, costo, stock, p_venta, p_min), type="primary")
             
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
-# PESTAÑA 3: REPORTES (CRUCE DE DATOS)
+# PESTAÑA 3: REPORTES (CORREGIDO PARA EVITAR KEYERROR)
 # ==================================================
 with tabs[2]:
     if check_login("tab_almacen"):
@@ -364,25 +289,32 @@ with tabs[2]:
             st.session_state.admin_login = False
             st.rerun()
 
-        modo = st.radio("Selecciona Reporte:", ["📉 Análisis de Rentabilidad", "📋 Inventario y Stock", "🗑️ Gestión de Productos"])
+        modo = st.radio("Reporte:", ["📉 Análisis de Rentabilidad", "📋 Inventario y Stock", "🗑️ Eliminar Producto"])
         st.write("---")
 
         if modo == "📉 Análisis de Rentabilidad":
-            # REPORTE MAESTRO: Cruzamos Ventas con Costos para saber la ganancia real
+            # CORRECCIÓN: Pedimos TO-DO (*) para evitar errores de columnas faltantes
             res_ventas = supabase.table("ventas").select("*").execute()
-            res_prod = supabase.table("productos").select("codigo_barras, nombre, costo_compra").execute()
+            res_prod = supabase.table("productos").select("*").execute()
             
             if res_ventas.data and res_prod.data:
                 df_ventas = pd.DataFrame(res_ventas.data)
                 df_prod = pd.DataFrame(res_prod.data)
                 
-                # Unimos tablas (Ventas + Costo del Producto)
+                # FORZAMOS A TEXTO PARA QUE CRUCEN BIEN
+                df_ventas['producto_id'] = df_ventas['producto_id'].astype(str)
+                df_prod['codigo_barras'] = df_prod['codigo_barras'].astype(str)
+
+                # UNIMOS TABLAS
                 df_full = pd.merge(df_ventas, df_prod, left_on='producto_id', right_on='codigo_barras', how='left')
                 
-                # Calculamos Ganancia Real (Precio Venta - Costo Compra)
+                # RELLENAMOS DATOS FALTANTES (POR SI SE BORRÓ EL PRODUCTO)
+                df_full['nombre'] = df_full['nombre'].fillna("Producto Eliminado")
+                df_full['costo_compra'] = df_full['costo_compra'].fillna(0)
+                
+                # CÁLCULOS
                 df_full['ganancia_real'] = df_full['precio_final_vendido'] - df_full['costo_compra']
                 
-                # Métricas
                 total_vendido = df_full['precio_final_vendido'].sum()
                 ganancia_total = df_full['ganancia_real'].sum()
                 
@@ -391,39 +323,30 @@ with tabs[2]:
                 m2.metric("Ganancia Neta", f"S/. {ganancia_total:.2f}", delta="Dinero Real")
                 m3.metric("Transacciones", len(df_full))
                 
-                st.write("📜 **Detalle de Últimas Ventas:**")
-                st.dataframe(
-                    df_full[['created_at', 'nombre', 'precio_final_vendido', 'ganancia_real']].sort_values('created_at', ascending=False),
-                    use_container_width=True
-                )
+                st.write("📜 **Detalle:**")
+                # Seleccionamos columnas seguras
+                df_show = df_full[['created_at', 'nombre', 'precio_final_vendido', 'ganancia_real']].copy()
+                df_show.columns = ['Fecha/Hora', 'Producto', 'Precio Venta', 'Ganancia']
+                st.dataframe(df_show.sort_values('Fecha/Hora', ascending=False), use_container_width=True)
             else:
-                st.info("Aún no hay suficientes datos para el análisis.")
+                st.info("No hay datos suficientes para el reporte.")
 
         elif modo == "📋 Inventario y Stock":
-            # REPORTE DE STOCK
             res = supabase.table("productos").select("*").execute()
             if res.data:
                 df = pd.DataFrame(res.data)
-                
-                # Alerta de Stock Bajo
                 stock_critico = df[df['stock_actual'] <= 2]
                 if not stock_critico.empty:
-                    st.warning(f"⚠️ ¡ATENCIÓN! {len(stock_critico)} productos con stock crítico (menos de 2).")
-                    st.dataframe(stock_critico[['nombre', 'stock_actual']])
+                    st.warning(f"⚠️ {len(stock_critico)} productos con bajo stock!")
                 
-                st.write("📦 **Inventario General:**")
-                st.dataframe(
-                    df[['nombre', 'stock_actual', 'costo_compra', 'precio_lista', 'precio_minimo', 'codigo_barras']], 
-                    use_container_width=True
-                )
+                st.dataframe(df[['nombre', 'stock_actual', 'costo_compra', 'precio_lista', 'codigo_barras']], use_container_width=True)
 
-        elif modo == "🗑️ Gestión de Productos":
-            st.write("Eliminar productos mal registrados:")
+        elif modo == "🗑️ Eliminar Producto":
             code_del = st.text_input("Código a eliminar")
             st.markdown('<span class="btn-rojo">', unsafe_allow_html=True)
-            if st.button("🗑️ BORRAR DEL SISTEMA"):
+            if st.button("🗑️ BORRAR"):
                 supabase.table("productos").delete().eq("codigo_barras", code_del).execute()
-                st.success("Producto eliminado correctamente.")
+                st.success("Eliminado.")
                 time.sleep(1)
                 st.rerun()
             st.markdown('</span>', unsafe_allow_html=True)

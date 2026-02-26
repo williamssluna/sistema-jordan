@@ -29,11 +29,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. MEMORIA DEL SISTEMA (STATE) ---
+# --- 4. MEMORIA DEL SISTEMA Y SEGURIDAD (STATE) ---
 keys_to_init = {
     'carrito': [], 'last_ticket': None,
     'iny_alm_cod': "", 'iny_dev_cod': "", 'iny_merma_cod': "",
-    'cam_v_key': 0, 'cam_a_key': 0, 'cam_d_key': 0, 'cam_m_key': 0
+    'cam_v_key': 0, 'cam_a_key': 0, 'cam_d_key': 0, 'cam_m_key': 0,
+    'admin_auth': False  # Candado de Seguridad
 }
 for k, v in keys_to_init.items():
     if k not in st.session_state: st.session_state[k] = v
@@ -93,9 +94,39 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.6</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.7</div>', unsafe_allow_html=True)
 
-menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
+# --- 6. SISTEMA DE LOGIN Y MENÚ DINÁMICO ---
+st.sidebar.markdown("### 🏢 Panel de Control")
+
+# Definir opciones del menú según el nivel de acceso
+if st.session_state.admin_auth:
+    # MENÚ COMPLETO (DUEÑO)
+    menu_options = ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"]
+else:
+    # MENÚ RESTRINGIDO (VENDEDORES)
+    menu_options = ["🛒 VENTAS (POS)", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS"]
+
+menu = st.sidebar.radio("SISTEMA DE GESTIÓN", menu_options)
+
+st.sidebar.divider()
+
+# Módulo de Autenticación
+if not st.session_state.admin_auth:
+    st.sidebar.markdown("#### 🔐 Acceso Privado (Dueño)")
+    usuario = st.sidebar.text_input("Usuario")
+    clave = st.sidebar.text_input("Contraseña", type="password")
+    if st.sidebar.button("Entrar", use_container_width=True):
+        if usuario == "admin" and clave == "123456":
+            st.session_state.admin_auth = True
+            st.rerun()
+        else:
+            st.sidebar.error("❌ Credenciales incorrectas")
+else:
+    st.sidebar.success("✅ Modo Dueño Activado")
+    if st.sidebar.button("🔒 Cerrar Sesión Segura", use_container_width=True):
+        st.session_state.admin_auth = False
+        st.rerun()
 
 # ==========================================
 # 🛒 MÓDULO 1: VENTAS (CARRITO Y REGATEO)
@@ -190,7 +221,7 @@ if menu == "🛒 VENTAS (POS)":
                 except Exception as e: st.error(ERROR_ADMIN)
                 if exito_pago: st.rerun() 
         
-        # --- TICKET LIMPIO: 100% PARA EL CLIENTE ---
+        # --- TICKET LIMPIO ---
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
@@ -221,9 +252,9 @@ if menu == "🛒 VENTAS (POS)":
                 st.markdown(ticket_html, unsafe_allow_html=True)
 
 # ==========================================
-# 📦 MÓDULO 2: ALMACÉN PRO
+# 📦 MÓDULO 2: ALMACÉN PRO (SOLO ADMIN)
 # ==========================================
-elif menu == "📦 ALMACÉN PRO":
+elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
     st.subheader("Gestión de Inventario")
     t1, t2, t3 = st.tabs(["➕ Ingresar Mercadería", "⚙️ Configurar Listas", "📋 Inventario General"])
     
@@ -472,9 +503,9 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                 st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
 
 # ==========================================
-# 📊 MÓDULO 5: REPORTES (CONTROL INTERNO)
+# 📊 MÓDULO 5: REPORTES (SOLO ADMIN)
 # ==========================================
-elif menu == "📊 REPORTES":
+elif menu == "📊 REPORTES" and st.session_state.admin_auth:
     st.subheader("Centro de Análisis Financiero")
     try:
         detalles = supabase.table("ventas_detalle").select("*, productos(nombre, costo_compra), ventas_cabecera(created_at, ticket_numero)").execute()

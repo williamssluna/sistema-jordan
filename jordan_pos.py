@@ -6,7 +6,6 @@ import cv2
 import numpy as np
 from datetime import datetime
 import time
-import plotly.express as px
 
 # --- 1. CONEXIÓN AL CEREBRO (SUPABASE) ---
 URL_SUPABASE = "https://degzltrjrzqbahdonmmb.supabase.co"
@@ -39,7 +38,7 @@ keys_to_init = {
 for k, v in keys_to_init.items():
     if k not in st.session_state: st.session_state[k] = v
 
-# --- 5. FUNCIONES DE APOYO ---
+# --- 5. FUNCIONES DE APOYO (CÁMARA "OJO DE HALCÓN") ---
 def scan_pos(image):
     if not image: return None
     try:
@@ -94,7 +93,7 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.4</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.5</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
 
@@ -106,7 +105,6 @@ if menu == "🛒 VENTAS (POS)":
     with col_v1:
         st.subheader("🔍 Ingreso de Productos")
         
-        # --- NUEVO: INGRESO MANUAL DE CÓDIGO DE BARRAS ---
         with st.form("form_manual_barcode", clear_on_submit=True):
             col_mb1, col_mb2 = st.columns([3, 1])
             manual_code = col_mb1.text_input("Tipear Código Numérico (Plan B)")
@@ -192,23 +190,24 @@ if menu == "🛒 VENTAS (POS)":
                 except Exception as e: st.error(ERROR_ADMIN)
                 if exito_pago: st.rerun() 
         
+        # --- TICKET UNIFICADO DENTRO DEL DIV ---
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
                 st.success("✅ Venta procesada correctamente.")
                 
+                ticket_html = f"""
+                <div class="ticket-termico">
+                    <center><b>ACCESORIOS JORDAN</b></center>
+                    <center>{tk['doc']}</center>
+                    --------------------------------<br>
+                    TICKET: {tk['num']}<br>
+                    FECHA: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
+                    --------------------------------<br>
+                """
+                
                 if tk['doc'] == "Ticket Interno":
-                    st.markdown(f"""
-                    <div class="ticket-termico">
-                        <center><b>ACCESORIOS JORDAN (CONTROL)</b></center>
-                        <center>{tk['doc']}</center>
-                        --------------------------------<br>
-                        TICKET: {tk['num']}<br>
-                        FECHA: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
-                        --------------------------------<br>
-                        <b>RESUMEN DE UTILIDADES:</b><br>
-                    """, unsafe_allow_html=True)
-                    
+                    ticket_html += "<b>RESUMEN DE UTILIDADES:</b><br><br>"
                     total_costo = 0
                     for it in tk['items']:
                         costo_sub = it['costo'] * it['cant']
@@ -216,10 +215,10 @@ if menu == "🛒 VENTAS (POS)":
                         utilidad = venta_sub - costo_sub
                         total_costo += costo_sub
                         
-                        st.write(f"<b>{it['nombre'][:20]}</b> (x{it['cant']})<br> Costo: S/. {costo_sub:.2f} | Venta: S/. {venta_sub:.2f} <br> <span style='color:green'>Ganancia: S/. {utilidad:.2f}</span>", unsafe_allow_html=True)
+                        ticket_html += f"<b>{it['nombre'][:20]}</b> (x{it['cant']})<br> Costo: S/. {costo_sub:.2f} | Venta: S/. {venta_sub:.2f} <br> <span style='color:green'>Ganancia: S/. {utilidad:.2f}</span><br><br>"
                     
                     ganancia_total = tk['total'] - total_costo
-                    st.markdown(f"""
+                    ticket_html += f"""
                         --------------------------------<br>
                         <b>VENTA TOTAL: S/. {tk['total']:.2f}</b><br>
                         COSTO INVERSIÓN: S/. {total_costo:.2f}<br>
@@ -227,28 +226,22 @@ if menu == "🛒 VENTAS (POS)":
                         MÉTODO: {tk['pago']}<br>
                         --------------------------------<br>
                     </div>
-                    """, unsafe_allow_html=True)
-                
+                    """
                 else:
-                    st.markdown(f"""
-                    <div class="ticket-termico">
-                        <center><b>ACCESORIOS JORDAN</b></center>
-                        <center>{tk['doc']}</center>
-                        --------------------------------<br>
-                        TICKET: {tk['num']}<br>
-                        FECHA: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br>
-                        --------------------------------<br>
-                    """, unsafe_allow_html=True)
                     for it in tk['items']:
-                        st.write(f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}", unsafe_allow_html=True)
-                    st.markdown(f"""
+                        ticket_html += f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br><br>"
+                    
+                    ticket_html += f"""
                         --------------------------------<br>
                         <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
                         MÉTODO: {tk['pago']}<br>
                         --------------------------------<br>
                         <center>¡Gracias por su compra!</center>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """
+                
+                # Renderiza todo el string HTML de una sola vez
+                st.markdown(ticket_html, unsafe_allow_html=True)
 
 # ==========================================
 # 📦 MÓDULO 2: ALMACÉN PRO
@@ -502,18 +495,49 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                 st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
 
 # ==========================================
-# 📊 MÓDULO 5: REPORTES
+# 📊 MÓDULO 5: REPORTES (NUEVO DISEÑO DETALLADO)
 # ==========================================
 elif menu == "📊 REPORTES":
     st.subheader("Centro de Análisis Financiero")
-    v_full = load_data("ventas_cabecera")
-    if not v_full.empty:
-        m1, m2 = st.columns(2)
-        m1.metric("Ingresos Totales (Bruto)", f"S/. {v_full['total_venta'].sum():.2f}")
-        m2.metric("Total de Ventas Realizadas", len(v_full))
+    try:
+        # Cruce de tablas: Detalles + Producto (para costos) + Cabecera (para ticket/fecha)
+        detalles = supabase.table("ventas_detalle").select("*, productos(nombre, costo_compra), ventas_cabecera(created_at, ticket_numero)").execute()
         
-        if 'created_at' in v_full.columns:
-            v_full['fecha'] = pd.to_datetime(v_full['created_at']).dt.date
-            fig = px.bar(v_full.groupby('fecha')['total_venta'].sum().reset_index(), x="fecha", y="total_venta", title="Ingresos por Día")
-            st.plotly_chart(fig, use_container_width=True)
-    else: st.info("📭 Aún no se han registrado ventas para generar reportes.")
+        if detalles.data:
+            df_rep = pd.DataFrame(detalles.data)
+            
+            # Limpiamos y extraemos la data cruzada
+            df_rep['Ticket'] = df_rep['ventas_cabecera'].apply(lambda x: x['ticket_numero'] if isinstance(x, dict) else 'N/A')
+            df_rep['Fecha'] = df_rep['ventas_cabecera'].apply(lambda x: pd.to_datetime(x['created_at']).strftime('%d/%m/%Y %H:%M') if isinstance(x, dict) else 'N/A')
+            df_rep['Producto'] = df_rep['productos'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'Desconocido')
+            df_rep['Costo Unitario'] = df_rep['productos'].apply(lambda x: float(x['costo_compra']) if isinstance(x, dict) and x.get('costo_compra') else 0.0)
+            
+            df_rep['Cantidad'] = df_rep['cantidad']
+            df_rep['Precio Venta (Unid)'] = df_rep['precio_unitario']
+            df_rep['Total Venta'] = df_rep['subtotal']
+            df_rep['Costo Total'] = df_rep['Costo Unitario'] * df_rep['Cantidad']
+            df_rep['Ganancia Pura'] = df_rep['Total Venta'] - df_rep['Costo Total']
+            
+            # Resumen de Alta Gerencia
+            total_vendido = df_rep['Total Venta'].sum()
+            total_ganancia = df_rep['Ganancia Pura'].sum()
+            
+            m1, m2 = st.columns(2)
+            m1.metric("💰 Ingresos Totales Brutos", f"S/. {total_vendido:.2f}")
+            m2.metric("📈 Utilidad Neta (Ganancia Pura)", f"S/. {total_ganancia:.2f}")
+            
+            st.divider()
+            st.write("### 📝 Detalle Ítem por Ítem")
+            
+            # Formateamos la tabla final para mostrar
+            df_show = df_rep[['Fecha', 'Ticket', 'Producto', 'Cantidad', 'Precio Venta (Unid)', 'Total Venta', 'Ganancia Pura']]
+            
+            for col in ['Precio Venta (Unid)', 'Total Venta', 'Ganancia Pura']:
+                df_show[col] = df_show[col].apply(lambda x: f"S/. {x:.2f}")
+                
+            st.dataframe(df_show, use_container_width=True)
+            
+        else:
+            st.info("📭 Aún no se han registrado ventas para generar reportes.")
+    except Exception as e:
+        st.error(f"{ERROR_ADMIN} | Detalle de error interno: {e}")

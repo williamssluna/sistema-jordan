@@ -16,7 +16,7 @@ supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
 st.set_page_config(page_title="JORDAN POS SMART", layout="wide", page_icon="📱")
 
 # --- 2. MENSAJE OFICIAL DE SOPORTE ---
-ERROR_ADMIN = "🚨 Ocurrió un error inesperado. Por favor, contactar con el administrador: **Williams Luna - Celular: 95555555**"
+ERROR_ADMIN = "🚨 Ocurrió un error. Contactar al administrador: **Williams Luna - Celular: 95555555**"
 
 # --- 3. ESTILO VISUAL PROFESIONAL ---
 st.markdown("""
@@ -42,14 +42,27 @@ keys_to_init = {
 for k, v in keys_to_init.items():
     if k not in st.session_state: st.session_state[k] = v
 
-# --- 5. FUNCIONES DE APOYO ---
+# --- 5. FUNCIONES DE APOYO (CÁMARA OPTIMIZADA) ---
 def scan_pos(image):
     if not image: return None
     try:
         file_bytes = np.asarray(bytearray(image.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, 1)
-        res = zxingcpp.read_barcodes(img)
-        return res[0].text if res else None
+        img_original = cv2.imdecode(file_bytes, 1)
+        
+        # Algoritmo de "Ojo de Águila": Recorta el centro y pasa a grises para forzar lectura
+        h, w, _ = img_original.shape
+        start_row, start_col = int(h * 0.20), int(w * 0.20)
+        end_row, end_col = int(h * 0.80), int(w * 0.80)
+        img_crop = img_original[start_row:end_row, start_col:end_col]
+
+        imagenes = [img_crop, cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY), img_original]
+        
+        for img in imagenes:
+            try:
+                res = zxingcpp.read_barcodes(img)
+                if res: return res[0].text
+            except: continue
+        return None
     except:
         return None
 
@@ -60,7 +73,7 @@ def load_data(table):
     except: return pd.DataFrame()
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v4.9</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.0</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
 
@@ -76,6 +89,7 @@ if menu == "🛒 VENTAS (POS)":
             if img:
                 code = scan_pos(img)
                 if code:
+                    exito_cam = False
                     try:
                         prod_db = supabase.table("productos").select("*").eq("codigo_barras", code).execute()
                         if prod_db.data:
@@ -88,12 +102,14 @@ if menu == "🛒 VENTAS (POS)":
                                     st.session_state.carrito.append({'id': code, 'nombre': p['nombre'], 'precio': float(p['precio_lista']), 'cant': 1})
                                 st.success(f"Añadido: {p['nombre']}")
                                 st.session_state.cam_v_key += 1 
-                                time.sleep(0.5); st.rerun()
+                                exito_cam = True
                             else: st.error("❌ Sin stock disponible.")
                         else: st.warning("⚠️ Producto no encontrado en el sistema.")
-                    except: st.error(ERROR_ADMIN)
+                    except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                    
+                    if exito_cam: time.sleep(0.5); st.rerun()
                 else:
-                    st.warning("⚠️ La foto está borrosa o el código no es visible. ¡Intenta de nuevo!")
+                    st.warning("⚠️ No se detectó código. Intenta acercar o alejar la cámara.")
 
         search = st.text_input("Búsqueda Manual (Ej. Mica S23)")
         if search:
@@ -110,7 +126,7 @@ if menu == "🛒 VENTAS (POS)":
                                 st.rerun()
                             else: st.error("Sin stock")
                 else: st.info("No se encontraron productos con ese nombre.")
-            except: st.error(ERROR_ADMIN)
+            except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
 
     with col_v2:
         st.subheader("🛍️ Carrito Actual")
@@ -131,6 +147,7 @@ if menu == "🛒 VENTAS (POS)":
             doc = st.selectbox("Comprobante", ["Ticket Interno", "Boleta Electrónica"])
             
             if st.button("🏁 PROCESAR PAGO", type="primary"):
+                exito_pago = False
                 try:
                     t_num = f"AJ-{int(time.time())}"
                     res_cab = supabase.table("ventas_cabecera").insert({"ticket_numero": t_num, "total_venta": total, "metodo_pago": pago, "tipo_comprobante": doc}).execute()
@@ -143,8 +160,10 @@ if menu == "🛒 VENTAS (POS)":
                     
                     st.session_state.last_ticket = {'num': t_num, 'items': st.session_state.carrito.copy(), 'total': total, 'pago': pago, 'doc': doc}
                     st.session_state.carrito = []
-                    st.rerun() 
-                except: st.error(ERROR_ADMIN)
+                    exito_pago = True
+                except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                
+                if exito_pago: st.rerun() 
         
         if st.session_state.last_ticket:
             with st.container():
@@ -188,7 +207,7 @@ elif menu == "📦 ALMACÉN PRO":
                     st.session_state.cam_a_key += 1 
                     st.rerun() 
                 else:
-                    st.warning("⚠️ La foto está borrosa o el código no es visible.")
+                    st.warning("⚠️ No se detectó código. Intenta de nuevo.")
         
         cats = load_data("categorias")
         mars = load_data("marcas")
@@ -211,9 +230,9 @@ elif menu == "📦 ALMACÉN PRO":
         f_stock = f7.number_input("Stock Inicial", key="alm_stock", min_value=1, step=1)
         
         if st.button("🚀 GUARDAR EN INVENTARIO", type="primary"):
+            exito_inv = False
             if st.session_state.alm_cod and st.session_state.alm_nom and not cats.empty and not mars.empty:
                 try:
-                    # Verificar si el código ya existe
                     check_exist = supabase.table("productos").select("codigo_barras").eq("codigo_barras", st.session_state.alm_cod).execute()
                     if check_exist.data:
                         st.error("❌ Este código de barras ya existe. Ve a la pestaña 'Inventario y Reabastecimiento' para sumarle stock.")
@@ -227,19 +246,20 @@ elif menu == "📦 ALMACÉN PRO":
                             "precio_minimo": st.session_state.alm_pmin, "stock_actual": st.session_state.alm_stock
                         }).execute()
                         
-                        # Limpieza total del formulario
                         st.session_state.alm_cod = ""
                         st.session_state.alm_nom = ""
                         st.session_state.alm_costo = 0.0
                         st.session_state.alm_venta = 0.0
                         st.session_state.alm_pmin = 0.0
                         st.session_state.alm_stock = 1
-                        st.success("✅ Producto registrado exitosamente.")
-                        time.sleep(1.5); st.rerun()
-                except Exception as e: 
-                    st.error(f"{ERROR_ADMIN} (Detalle oculto para seguridad)")
+                        exito_inv = True
+                except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
             else: 
                 st.warning("⚠️ Debes rellenar código, nombre y asegurarte de haber creado Categorías y Marcas.")
+            
+            if exito_inv: 
+                st.success("✅ Producto registrado exitosamente.")
+                time.sleep(1.5); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t2:
@@ -250,21 +270,26 @@ elif menu == "📦 ALMACÉN PRO":
             st.write("#### 📂 Categorías")
             new_c = st.text_input("Crear Categoría", key="cat_nom")
             if st.button("➕ Guardar Categoría", type="primary"):
+                exito_c = False
                 if st.session_state.cat_nom: 
                     try:
                         supabase.table("categorias").insert({"nombre": st.session_state.cat_nom}).execute()
                         st.session_state.cat_nom = "" 
-                        st.success("Guardada."); time.sleep(1); st.rerun()
-                    except: st.error(ERROR_ADMIN)
+                        exito_c = True
+                    except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                if exito_c: st.success("Guardada."); time.sleep(1); st.rerun()
+
             cats_df = load_data("categorias")
             if not cats_df.empty:
                 del_c = st.selectbox("Eliminar Categoría", ["..."] + cats_df['nombre'].tolist())
                 if st.button("🗑️ Borrar Categoría"):
+                    exito_dc = False
                     if del_c != "...": 
                         try:
                             supabase.table("categorias").delete().eq("nombre", del_c).execute()
-                            st.rerun()
-                        except: st.error(ERROR_ADMIN)
+                            exito_dc = True
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                    if exito_dc: st.rerun()
             else: st.info("📭 Sin categorías.")
             st.markdown('</div>', unsafe_allow_html=True)
             
@@ -273,27 +298,31 @@ elif menu == "📦 ALMACÉN PRO":
             st.write("#### ®️ Marcas")
             new_m = st.text_input("Crear Marca", key="mar_nom")
             if st.button("➕ Guardar Marca", type="primary"):
+                exito_m = False
                 if st.session_state.mar_nom: 
                     try:
                         supabase.table("marcas").insert({"nombre": st.session_state.mar_nom}).execute()
                         st.session_state.mar_nom = "" 
-                        st.success("Guardada."); time.sleep(1); st.rerun()
-                    except: st.error(ERROR_ADMIN)
+                        exito_m = True
+                    except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                if exito_m: st.success("Guardada."); time.sleep(1); st.rerun()
+
             mars_df = load_data("marcas")
             if not mars_df.empty:
                 del_m = st.selectbox("Eliminar Marca", ["..."] + mars_df['nombre'].tolist())
                 if st.button("🗑️ Borrar Marca"):
+                    exito_dm = False
                     if del_m != "...": 
                         try:
                             supabase.table("marcas").delete().eq("nombre", del_m).execute()
-                            st.rerun()
-                        except: st.error(ERROR_ADMIN)
+                            exito_dm = True
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                    if exito_dm: st.rerun()
             else: st.info("📭 Sin marcas.")
             st.markdown('</div>', unsafe_allow_html=True)
 
     with t3:
         st.write("### 📋 Inventario General")
-        # Mostrar nombres en lugar de IDs (Traducción Relacional)
         try:
             prods = supabase.table("productos").select("*, categorias(nombre), marcas(nombre)").execute()
             if prods.data: 
@@ -303,10 +332,10 @@ elif menu == "📦 ALMACÉN PRO":
                 df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'calidad', 'stock_actual', 'precio_lista', 'precio_minimo']]
                 st.dataframe(df_show, use_container_width=True)
                 
-                # --- MÓDULO DE REABASTECIMIENTO RÁPIDO ---
+                # --- MÓDULO DE REABASTECIMIENTO RÁPIDO CORREGIDO ---
                 st.divider()
                 st.write("### ⚡ Reabastecimiento Rápido")
-                st.info("Actualiza el stock de un producto existente sin tener que escanearlo o registrarlo de nuevo.")
+                st.info("Suma stock rápidamente a un producto existente.")
                 col_r1, col_r2 = st.columns([3, 1])
                 
                 prod_options = [f"{row['codigo_barras']} - {row['nombre']} (Stock actual: {row['stock_actual']})" for idx, row in df.iterrows()]
@@ -314,18 +343,22 @@ elif menu == "📦 ALMACÉN PRO":
                 add_stock = col_r2.number_input("Cantidad a sumar", min_value=1, step=1)
                 
                 if st.button("➕ Sumar al Stock", type="primary"):
+                    exito_re = False
                     if selected_prod != "Seleccionar...":
                         code_to_update = selected_prod.split(" - ")[0]
                         current_stock = int(df[df['codigo_barras'] == code_to_update]['stock_actual'].iloc[0])
                         new_stock = current_stock + add_stock
                         try:
                             supabase.table("productos").update({"stock_actual": new_stock}).eq("codigo_barras", code_to_update).execute()
+                            exito_re = True
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                        
+                        if exito_re:
                             st.success(f"✅ Stock actualizado. Nuevo stock: {new_stock}")
                             time.sleep(1.5); st.rerun()
-                        except: st.error(ERROR_ADMIN)
             else: 
                 st.info("📭 Aún no se han registrado productos en el inventario.")
-        except: st.error(ERROR_ADMIN)
+        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
 
 # ==========================================
 # 🔄 MÓDULO 3: DEVOLUCIONES
@@ -340,7 +373,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 st.session_state.dev_cod = code_dev 
                 st.session_state.cam_d_key += 1 
                 st.rerun()
-            else: st.warning("⚠️ Foto borrosa, intenta de nuevo.")
+            else: st.warning("⚠️ No se detectó código. Intenta de nuevo.")
 
     tick = st.text_input("Ingresa el Número de Ticket o Código de Producto", key="dev_cod")
     if tick:
@@ -353,13 +386,17 @@ elif menu == "🔄 DEVOLUCIONES":
                     col_d1, col_d2 = st.columns([3, 1])
                     col_d1.write(f"**{d['productos']['nombre']}** - Compró: {d['cantidad']} ud.")
                     if col_d2.button("Ejecutar Devolución", key=f"dev_{d['id']}"):
-                        p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
-                        supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
-                        supabase.table("devoluciones").insert({"producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
-                        st.session_state.dev_cod = "" 
-                        st.success("✅ Dinero descontado y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
+                        exito_dev = False
+                        try:
+                            p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
+                            supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
+                            supabase.table("devoluciones").insert({"producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
+                            st.session_state.dev_cod = "" 
+                            exito_dev = True
+                        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
+                        if exito_dev: st.success("✅ Dinero descontado y producto vuelto a vitrina."); time.sleep(1.5); st.rerun()
             else: st.warning("⚠️ Ticket no encontrado en el sistema. Verifica el número.")
-        except: st.error(ERROR_ADMIN)
+        except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
 
 # ==========================================
 # ⚠️ MÓDULO 4: MERMAS Y DAÑOS
@@ -374,13 +411,14 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                 st.session_state.merma_cod = code_m 
                 st.session_state.cam_m_key += 1 
                 st.rerun()
-            else: st.warning("⚠️ Foto borrosa, intenta de nuevo.")
+            else: st.warning("⚠️ No se detectó código. Intenta de nuevo.")
 
     m_cod = st.text_input("Código de Barras del Producto Dañado", key="merma_cod")
     m_cant = st.number_input("Cantidad a descontar", min_value=1)
     m_mot = st.selectbox("Motivo Exacto", ["Roto al instalar/mostrar", "Falla de Fábrica (Garantía Proveedor)", "Robo/Extravío"])
     
     if st.button("⚠️ CONFIRMAR PÉRDIDA Y DESCONTAR", type="primary"):
+        exito_merma = False
         if st.session_state.merma_cod:
             try:
                 p_inf = supabase.table("productos").select("stock_actual, costo_compra, nombre").eq("codigo_barras", st.session_state.merma_cod).execute()
@@ -389,11 +427,14 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                         supabase.table("productos").update({"stock_actual": p_inf.data[0]['stock_actual'] - m_cant}).eq("codigo_barras", st.session_state.merma_cod).execute()
                         supabase.table("mermas").insert({"producto_id": st.session_state.merma_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_inf.data[0]['costo_compra'] * m_cant}).execute()
                         st.session_state.merma_cod = "" 
-                        st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
+                        exito_merma = True
                     else: st.error("❌ No puedes dar de baja más stock del que tienes.")
                 else: st.warning("⚠️ Código de producto inválido o no existe en inventario.")
-            except: st.error(ERROR_ADMIN)
+            except Exception as e: st.error(f"{ERROR_ADMIN} | Detalle: {e}")
         else: st.warning("⚠️ Debes ingresar o escanear un código de barras.")
+        
+        if exito_merma:
+            st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
 
 # ==========================================
 # 📊 MÓDULO 5: REPORTES

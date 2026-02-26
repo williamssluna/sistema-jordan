@@ -67,7 +67,7 @@ def load_data(table):
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except: return pd.DataFrame()
 
-# NÚCLEO DE VENTAS: Función unificada para agregar al carrito (Cámara o Manual)
+# NÚCLEO DE VENTAS: Función unificada para agregar al carrito
 def procesar_codigo_venta(code):
     exito = False
     try:
@@ -93,7 +93,7 @@ def procesar_codigo_venta(code):
     return exito
 
 # --- CABECERA ---
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.5</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v5.6</div>', unsafe_allow_html=True)
 
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES"])
 
@@ -167,7 +167,7 @@ if menu == "🛒 VENTAS (POS)":
             st.divider()
             st.markdown(f"<h2 style='color:#16a34a; text-align:center;'>TOTAL: S/. {total_venta:.2f}</h2>", unsafe_allow_html=True)
             pago = st.selectbox("Medio de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
-            doc = st.selectbox("Comprobante a emitir", ["Ticket Interno", "Boleta Electrónica"])
+            doc = st.selectbox("Comprobante a emitir", ["Ticket de Venta", "Boleta Electrónica"])
             
             if st.button("🏁 PROCESAR PAGO", type="primary"):
                 exito_pago = False
@@ -190,7 +190,7 @@ if menu == "🛒 VENTAS (POS)":
                 except Exception as e: st.error(ERROR_ADMIN)
                 if exito_pago: st.rerun() 
         
-        # --- TICKET UNIFICADO DENTRO DEL DIV ---
+        # --- TICKET LIMPIO: 100% PARA EL CLIENTE ---
         if st.session_state.last_ticket:
             with st.container():
                 tk = st.session_state.last_ticket
@@ -206,41 +206,18 @@ if menu == "🛒 VENTAS (POS)":
                     --------------------------------<br>
                 """
                 
-                if tk['doc'] == "Ticket Interno":
-                    ticket_html += "<b>RESUMEN DE UTILIDADES:</b><br><br>"
-                    total_costo = 0
-                    for it in tk['items']:
-                        costo_sub = it['costo'] * it['cant']
-                        venta_sub = it['precio'] * it['cant']
-                        utilidad = venta_sub - costo_sub
-                        total_costo += costo_sub
-                        
-                        ticket_html += f"<b>{it['nombre'][:20]}</b> (x{it['cant']})<br> Costo: S/. {costo_sub:.2f} | Venta: S/. {venta_sub:.2f} <br> <span style='color:green'>Ganancia: S/. {utilidad:.2f}</span><br><br>"
-                    
-                    ganancia_total = tk['total'] - total_costo
-                    ticket_html += f"""
-                        --------------------------------<br>
-                        <b>VENTA TOTAL: S/. {tk['total']:.2f}</b><br>
-                        COSTO INVERSIÓN: S/. {total_costo:.2f}<br>
-                        <b>UTILIDAD NETA: S/. {ganancia_total:.2f}</b><br>
-                        MÉTODO: {tk['pago']}<br>
-                        --------------------------------<br>
-                    </div>
-                    """
-                else:
-                    for it in tk['items']:
-                        ticket_html += f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br><br>"
-                    
-                    ticket_html += f"""
-                        --------------------------------<br>
-                        <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
-                        MÉTODO: {tk['pago']}<br>
-                        --------------------------------<br>
-                        <center>¡Gracias por su compra!</center>
-                    </div>
-                    """
+                for it in tk['items']:
+                    ticket_html += f"{it['nombre'][:20]:<20} <br> {it['cant']:>2} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br><br>"
                 
-                # Renderiza todo el string HTML de una sola vez
+                ticket_html += f"""
+                    --------------------------------<br>
+                    <b>TOTAL PAGADO: S/. {tk['total']:.2f}</b><br>
+                    MÉTODO: {tk['pago']}<br>
+                    --------------------------------<br>
+                    <center>¡Gracias por su compra!</center>
+                </div>
+                """
+                
                 st.markdown(ticket_html, unsafe_allow_html=True)
 
 # ==========================================
@@ -495,18 +472,16 @@ elif menu == "⚠️ MERMAS/DAÑOS":
                 st.success(f"✅ Baja exitosa: {m_cant} ud. de {p_inf.data[0]['nombre']}"); time.sleep(1.5); st.rerun()
 
 # ==========================================
-# 📊 MÓDULO 5: REPORTES (NUEVO DISEÑO DETALLADO)
+# 📊 MÓDULO 5: REPORTES (CONTROL INTERNO)
 # ==========================================
 elif menu == "📊 REPORTES":
     st.subheader("Centro de Análisis Financiero")
     try:
-        # Cruce de tablas: Detalles + Producto (para costos) + Cabecera (para ticket/fecha)
         detalles = supabase.table("ventas_detalle").select("*, productos(nombre, costo_compra), ventas_cabecera(created_at, ticket_numero)").execute()
         
         if detalles.data:
             df_rep = pd.DataFrame(detalles.data)
             
-            # Limpiamos y extraemos la data cruzada
             df_rep['Ticket'] = df_rep['ventas_cabecera'].apply(lambda x: x['ticket_numero'] if isinstance(x, dict) else 'N/A')
             df_rep['Fecha'] = df_rep['ventas_cabecera'].apply(lambda x: pd.to_datetime(x['created_at']).strftime('%d/%m/%Y %H:%M') if isinstance(x, dict) else 'N/A')
             df_rep['Producto'] = df_rep['productos'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'Desconocido')
@@ -518,7 +493,6 @@ elif menu == "📊 REPORTES":
             df_rep['Costo Total'] = df_rep['Costo Unitario'] * df_rep['Cantidad']
             df_rep['Ganancia Pura'] = df_rep['Total Venta'] - df_rep['Costo Total']
             
-            # Resumen de Alta Gerencia
             total_vendido = df_rep['Total Venta'].sum()
             total_ganancia = df_rep['Ganancia Pura'].sum()
             
@@ -529,7 +503,6 @@ elif menu == "📊 REPORTES":
             st.divider()
             st.write("### 📝 Detalle Ítem por Ítem")
             
-            # Formateamos la tabla final para mostrar
             df_show = df_rep[['Fecha', 'Ticket', 'Producto', 'Cantidad', 'Precio Venta (Unid)', 'Total Venta', 'Ganancia Pura']]
             
             for col in ['Precio Venta (Unid)', 'Total Venta', 'Ganancia Pura']:
@@ -540,4 +513,4 @@ elif menu == "📊 REPORTES":
         else:
             st.info("📭 Aún no se han registrado ventas para generar reportes.")
     except Exception as e:
-        st.error(f"{ERROR_ADMIN} | Detalle de error interno: {e}")
+        st.error(f"{ERROR_ADMIN}")

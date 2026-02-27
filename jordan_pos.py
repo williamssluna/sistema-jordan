@@ -55,7 +55,7 @@ keys_to_init = {
     'cam_a_key': 0, 
     'cam_d_key': 0, 
     'cam_m_key': 0,
-    'admin_auth': False
+    'admin_auth': True # <--- FORZADO A TRUE PARA MODO PRUEBAS
 }
 for key, value in keys_to_init.items():
     if key not in st.session_state: 
@@ -65,7 +65,6 @@ for key, value in keys_to_init.items():
 # 4. FUNCIONES DE APOYO Y MOTOR PRINCIPAL
 # ==========================================
 
-# Obtener fecha del último cierre de caja para filtrar historiales
 def get_last_cierre_dt():
     try:
         cierres_db = supabase.table("cierres_caja").select("fecha_cierre").order("fecha_cierre", desc=True).limit(1).execute()
@@ -75,7 +74,6 @@ def get_last_cierre_dt():
         pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True)
 
-# Cámara Ojo de Halcón (Procesamiento agresivo para códigos difíciles)
 def scan_pos(image):
     if not image: return None
     try:
@@ -129,35 +127,18 @@ def procesar_codigo_venta(code):
     return exito
 
 # ==========================================
-# 5. ESTRUCTURA DE LA PÁGINA Y MENÚ
+# 5. ESTRUCTURA DE LA PÁGINA Y MENÚ (LIBERADO)
 # ==========================================
-st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.8</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | SMART POS v6.8 (Pruebas)</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("### 🏢 Panel de Control")
 
-if st.session_state.admin_auth:
-    menu_options = ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES (CAJA)"]
-else:
-    menu_options = ["🛒 VENTAS (POS)", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS"]
-
+# Menú liberado, muestra todas las opciones
+menu_options = ["🛒 VENTAS (POS)", "📦 ALMACÉN PRO", "🔄 DEVOLUCIONES", "⚠️ MERMAS/DAÑOS", "📊 REPORTES (CAJA)"]
 menu = st.sidebar.radio("SISTEMA DE GESTIÓN", menu_options)
-st.sidebar.divider()
 
-if not st.session_state.admin_auth:
-    st.sidebar.markdown("#### 🔐 Acceso Privado")
-    usuario = st.sidebar.text_input("Usuario")
-    clave = st.sidebar.text_input("Contraseña", type="password")
-    if st.sidebar.button("Entrar", use_container_width=True):
-        if usuario == "admin" and clave == "123456":
-            st.session_state.admin_auth = True
-            st.rerun()
-        else:
-            st.sidebar.error("❌ Credenciales incorrectas")
-else:
-    st.sidebar.success("✅ Modo Administrador Activo")
-    if st.sidebar.button("🔒 Cerrar Sesión Segura", use_container_width=True):
-        st.session_state.admin_auth = False
-        st.rerun()
+st.sidebar.divider()
+st.sidebar.info("🔓 **MODO DE PRUEBAS ACTIVADO:** Todas las contraseñas y candados han sido retirados temporalmente.")
 
 # ==========================================
 # 🛒 MÓDULO 1: VENTAS Y REGATEO
@@ -272,9 +253,9 @@ if menu == "🛒 VENTAS (POS)":
                 st.markdown(ticket_html, unsafe_allow_html=True)
 
 # ==========================================
-# 📦 MÓDULO 2: ALMACÉN PRO (SOLO ADMINISTRADOR)
+# 📦 MÓDULO 2: ALMACÉN PRO
 # ==========================================
-elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
+elif menu == "📦 ALMACÉN PRO":
     st.subheader("Gestión de Inventario Maestro")
     t1, t2, t3, t4 = st.tabs(["➕ Ingreso Mercadería", "⚙️ Configuración", "📋 Inventario General", "📉 Mermas Históricas"])
     
@@ -445,7 +426,7 @@ elif menu == "📦 ALMACÉN PRO" and st.session_state.admin_auth:
         except: pass
 
 # ==========================================
-# 🔄 MÓDULO 3: DEVOLUCIONES (HÍBRIDO E INTELIGENTE)
+# 🔄 MÓDULO 3: DEVOLUCIONES
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones y Reembolsos")
@@ -596,9 +577,9 @@ elif menu == "⚠️ MERMAS/DAÑOS":
     except: pass
 
 # ==========================================
-# 📊 MÓDULO 5: REPORTES Y CIERRE DE CAJA (Z) (SOLO ADMIN)
+# 📊 MÓDULO 5: REPORTES Y CIERRE DE CAJA (Z) 
 # ==========================================
-elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
+elif menu == "📊 REPORTES (CAJA)":
     st.subheader("Auditoría Contable de Turno")
     
     # VISTA 1: TICKET Z (CIERRE FINALIZADO)
@@ -639,7 +620,7 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
             st.session_state.ticket_cierre = None
             st.rerun()
 
-    # VISTA 2: DASHBOARD EN TIEMPO REAL Y BOTÓN DE CIERRE
+    # VISTA 2: DASHBOARD EN TIEMPO REAL Y BOTÓN DE CIERRE (MODO LIBRE)
     else:
         try:
             last_cierre_dt = get_last_cierre_dt()
@@ -709,40 +690,38 @@ elif menu == "📊 REPORTES (CAJA)" and st.session_state.admin_auth:
             st.write("Esta acción generará tu reporte final, guardará el historial contable, y **convertirá tu Stock Actual en tu nuevo Stock Inicial** para el próximo turno.")
             
             with st.form("form_cierre", clear_on_submit=True):
-                clave_cierre = st.text_input("Ingresa clave Admin para autorizar", type="password")
-                if st.form_submit_button("🔒 APROBAR CIERRE DE CAJA", type="primary"):
-                    if clave_cierre == "123456":
-                        try:
-                            # 1. Guardar Corte en Base de Datos
-                            supabase.table("cierres_caja").insert({
-                                "total_ventas": float(total_ventas_brutas),
-                                "utilidad": float(ganancia_neta_real),
-                                "total_mermas": float(total_perdida_mermas),
-                                "total_devoluciones": float(total_devoluciones)
-                            }).execute()
-                            
-                            # 2. LA MAGIA: Igualar Stock Inicial al Stock Actual
-                            prods_res = supabase.table("productos").select("codigo_barras, stock_actual").execute()
-                            if prods_res.data:
-                                for prod in prods_res.data:
-                                    supabase.table("productos").update({"stock_inicial": prod['stock_actual']}).eq("codigo_barras", prod['codigo_barras']).execute()
-                            
-                            # 3. Preparar Ticket Visual
-                            st.session_state.ticket_cierre = {
-                                'fecha': datetime.now().strftime('%d/%m/%Y %H:%M'),
-                                'cant_vendida': cant_vendida,
-                                'tot_ventas': total_ventas_brutas,
-                                'capital_inv': capital_invertido_real,
-                                'cant_devuelta': cant_devuelta,
-                                'tot_dev': total_devoluciones,
-                                'cant_merma': cant_merma,
-                                'tot_merma': total_perdida_mermas,
-                                'caja_neta': caja_neta_real,
-                                'utilidad': ganancia_neta_real
-                            }
-                            st.rerun() 
-                        except Exception as e: st.error("🚨 Error crítico de conexión al ejecutar el cierre.")
-                    else: st.error("❌ Clave incorrecta.")
+                st.write("*(Modo pruebas: No se requiere contraseña para cerrar caja)*")
+                if st.form_submit_button("🔒 APROBAR CIERRE DE CAJA DIRECTO", type="primary"):
+                    try:
+                        # 1. Guardar Corte en Base de Datos
+                        supabase.table("cierres_caja").insert({
+                            "total_ventas": float(total_ventas_brutas),
+                            "utilidad": float(ganancia_neta_real),
+                            "total_mermas": float(total_perdida_mermas),
+                            "total_devoluciones": float(total_devoluciones)
+                        }).execute()
+                        
+                        # 2. LA MAGIA: Igualar Stock Inicial al Stock Actual
+                        prods_res = supabase.table("productos").select("codigo_barras, stock_actual").execute()
+                        if prods_res.data:
+                            for prod in prods_res.data:
+                                supabase.table("productos").update({"stock_inicial": prod['stock_actual']}).eq("codigo_barras", prod['codigo_barras']).execute()
+                        
+                        # 3. Preparar Ticket Visual
+                        st.session_state.ticket_cierre = {
+                            'fecha': datetime.now().strftime('%d/%m/%Y %H:%M'),
+                            'cant_vendida': cant_vendida,
+                            'tot_ventas': total_ventas_brutas,
+                            'capital_inv': capital_invertido_real,
+                            'cant_devuelta': cant_devuelta,
+                            'tot_dev': total_devoluciones,
+                            'cant_merma': cant_merma,
+                            'tot_merma': total_perdida_mermas,
+                            'caja_neta': caja_neta_real,
+                            'utilidad': ganancia_neta_real
+                        }
+                        st.rerun() 
+                    except Exception as e: st.error("🚨 Error crítico de conexión al ejecutar el cierre.")
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.divider()

@@ -117,7 +117,6 @@ def fetch_upc_api(codigo):
 
 def get_lista_usuarios():
     try:
-        # SOLO TRAE VENDEDORES ACTIVOS
         res = supabase.table("usuarios").select("id, nombre_completo, usuario").eq("estado", "Activo").execute()
         return res.data if res.data else []
     except: return []
@@ -193,7 +192,7 @@ if st.session_state.logged_in:
     if "inventario_ver" in p: menu_options.append("📦 ALMACÉN")
     if "reportes" in p: menu_options.append("🧾 TICKETS")
     if "cierre_caja" in p or "reportes" in p: menu_options.append("📊 REPORTES")
-    if "gestion_usuarios" in p: menu_options.append("👥 VENDEDORES") # CAMBIO A VENDEDORES
+    if "gestion_usuarios" in p: menu_options.append("👥 VENDEDORES")
 
 menu = st.sidebar.radio("Navegación", menu_options)
 
@@ -398,7 +397,7 @@ elif menu == "🔄 DEVOLUCIONES":
 # ==========================================
 elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms:
     st.subheader("Gestión de Inventario Maestro")
-    t1, t2, t3 = st.tabs(["➕ Ingreso Mercadería", "⚙️ Configuración de Catálogos", "📋 Inventario General"])
+    t1, t2, t3 = st.tabs(["➕ Ingreso Mercadería", "⚙️ Configuración Catálogos", "📋 Inventario General"])
     
     with t1:
         if "inventario_agregar" in st.session_state.user_perms:
@@ -416,7 +415,6 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                             st.session_state.iny_alm_cod = code_a
                             st.session_state.api_nombre_sugerido = fetch_upc_api(code_a)
             
-            # Cargar todos los catálogos dinámicos
             cats = load_data("categorias")
             mars = load_data("marcas")
             cals = load_data("calidades")
@@ -448,15 +446,12 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
     with t2:
         if "inventario_agregar" in st.session_state.user_perms or "inventario_modificar" in st.session_state.user_perms:
             st.write("### Catálogos Dinámicos del Sistema")
-            st.info("Agrega las opciones que necesites para clasificar mejor tus accesorios. Todo lo que agregues aquí aparecerá en el menú de Ingreso de Mercadería.")
-            
             c_left, c_right = st.columns(2)
             c_left2, c_right2 = st.columns(2)
             
-            # --- CATEGORÍAS ---
             with c_left:
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
-                st.write("#### 📂 Categorías (Ej. Fundas, Micas)")
+                st.write("#### 📂 Categorías")
                 with st.form("f_cat", clear_on_submit=True):
                     new_c = st.text_input("Crear Categoría")
                     if st.form_submit_button("➕ Guardar") and new_c: 
@@ -468,10 +463,9 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                         supabase.table("categorias").delete().eq("nombre", del_c).execute(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-            # --- MARCAS ---
             with c_right:
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
-                st.write("#### ®️ Marcas (Ej. Samsung, Apple)")
+                st.write("#### ®️ Marcas")
                 with st.form("f_mar", clear_on_submit=True):
                     new_m = st.text_input("Crear Marca")
                     if st.form_submit_button("➕ Guardar") and new_m: 
@@ -483,10 +477,9 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                         supabase.table("marcas").delete().eq("nombre", del_m).execute(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-            # --- CALIDADES ---
             with c_left2:
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
-                st.write("#### ⭐ Calidades (Ej. Original, AAA)")
+                st.write("#### ⭐ Calidades")
                 with st.form("f_cal", clear_on_submit=True):
                     new_cal = st.text_input("Crear Calidad")
                     if st.form_submit_button("➕ Guardar") and new_cal: 
@@ -498,10 +491,9 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                         supabase.table("calidades").delete().eq("nombre", del_cal).execute(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-            # --- COMPATIBILIDADES ---
             with c_right2:
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
-                st.write("#### 📱 Compatibilidad (Ej. iPhone 15, S24)")
+                st.write("#### 📱 Compatibilidad")
                 with st.form("f_comp", clear_on_submit=True):
                     new_comp = st.text_input("Crear Compatibilidad")
                     if st.form_submit_button("➕ Guardar") and new_comp: 
@@ -512,7 +504,6 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                     if st.button("🗑️ Borrar", key="b_comp") and del_comp != "...": 
                         supabase.table("compatibilidades").delete().eq("nombre", del_comp).execute(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
-                
         else: st.error("🚫 Sin permisos.")
 
     with t3:
@@ -588,14 +579,28 @@ elif menu == "🧾 TICKETS" and "reportes" in st.session_state.user_perms:
 # ==========================================
 elif menu == "👥 VENDEDORES" and "gestion_usuarios" in st.session_state.user_perms:
     st.subheader("Panel de Control Gerencial (Vendedores)")
-    t_u1, t_u2, t_u3, t_u4, t_u5 = st.tabs(["📋 Vendedores Activos", "➕ Crear Nuevo", "⚙️ Permisos", "🗑️ Dar de Baja", "📊 Dashboard Vendedores"])
+    
+    # NUEVA ARQUITECTURA DE PESTAÑAS (Incluye Reactivar)
+    t_u1, t_u2, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Activos", "➕ Crear Nuevo", "⚙️ Permisos", "🗑️ Dar Baja", "♻️ Reactivar", "📊 Análisis"])
+    
+    # Extraer TODOS los usuarios de la base de datos para filtrarlos
+    usrs_db = supabase.table("usuarios").select("id, nombre_completo, usuario, clave, turno, permisos, estado").execute()
+    df_u = pd.DataFrame()
+    df_activos = pd.DataFrame()
+    df_inactivos = pd.DataFrame()
+    
+    if usrs_db.data:
+        df_u = pd.DataFrame(usrs_db.data)
+        df_u['permisos'] = df_u['permisos'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+        df_activos = df_u[df_u['estado'] == 'Activo']
+        df_inactivos = df_u[df_u['estado'] == 'Inactivo']
     
     with t_u1:
-        usrs = supabase.table("usuarios").select("id, nombre_completo, usuario, clave, turno, permisos").eq("estado", "Activo").execute()
-        if usrs.data:
-            df_u = pd.DataFrame(usrs.data)
-            df_u['permisos'] = df_u['permisos'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
-            st.dataframe(df_u[['id', 'nombre_completo', 'usuario', 'clave', 'turno', 'permisos']], use_container_width=True)
+        st.write("#### Vendedores Activos")
+        if not df_activos.empty:
+            st.dataframe(df_activos[['id', 'nombre_completo', 'usuario', 'clave', 'turno', 'permisos']], use_container_width=True)
+        else:
+            st.info("No hay vendedores activos.")
             
     with t_u2:
         with st.form("form_new_user", clear_on_submit=True):
@@ -606,41 +611,62 @@ elif menu == "👥 VENDEDORES" and "gestion_usuarios" in st.session_state.user_p
             n_perms = st.multiselect("Permisos:", ["mermas", "inventario_ver", "inventario_agregar", "inventario_modificar", "inventario_eliminar", "reportes", "cierre_caja", "gestion_usuarios"])
             if st.form_submit_button("Crear Vendedor", type="primary"):
                 if n_nombre and n_user and n_pass:
-                    supabase.table("usuarios").insert({"nombre_completo": n_nombre, "usuario": n_user, "clave": n_pass, "turno": n_turno, "permisos": n_perms, "estado": "Activo"}).execute()
-                    st.success("✅ Creado."); time.sleep(1); st.rerun()
+                    try:
+                        supabase.table("usuarios").insert({
+                            "nombre_completo": n_nombre, "usuario": n_user, "clave": n_pass, 
+                            "turno": n_turno, "permisos": n_perms, "estado": "Activo"
+                        }).execute()
+                        st.success("✅ Vendedor creado exitosamente.")
+                        time.sleep(1.5)
+                        st.rerun()
+                    except Exception as e:
+                        st.error("❌ Error: Ese 'Usuario (Login)' ya existe en el sistema. Por favor, usa un nombre de usuario diferente.")
 
     with t_u3:
-        if usrs.data:
-            user_to_edit = st.selectbox("Seleccionar vendedor a editar:", df_u['usuario'].tolist())
+        if not df_activos.empty:
+            st.write("#### 🛡️ Modificar Permisos de Acceso")
+            user_to_edit = st.selectbox("Seleccionar vendedor a editar:", df_activos['usuario'].tolist())
             raw_perms = supabase.table("usuarios").select("permisos").eq("usuario", user_to_edit).execute().data[0]['permisos']
             curr_perms = raw_perms if isinstance(raw_perms, list) else []
             with st.form("form_edit_perms"):
                 lista_permisos = ["mermas", "inventario_ver", "inventario_agregar", "inventario_modificar", "inventario_eliminar", "reportes", "cierre_caja", "gestion_usuarios"]
                 valid_curr = [p for p in curr_perms if p in lista_permisos]
-                new_perms = st.multiselect("Permisos Asignados (Borra o agrega):", lista_permisos, default=valid_curr)
+                new_perms = st.multiselect("Permisos Asignados:", lista_permisos, default=valid_curr)
                 if st.form_submit_button("💾 Guardar Permisos", type="primary"):
                     supabase.table("usuarios").update({"permisos": new_perms}).eq("usuario", user_to_edit).execute()
                     st.success("✅ Actualizado."); time.sleep(1); st.rerun()
 
-    # --- NUEVA OPCIÓN: ELIMINAR (DAR DE BAJA) ---
     with t_u4:
         st.write("#### ⚠️ Dar de Baja a un Vendedor")
-        st.warning("Por seguridad contable, el vendedor no se borra de la base de datos, sino que se 'Inhabilita' para que no pueda acceder nunca más, pero sus tickets pasados sigan existiendo.")
-        if usrs.data:
-            vendedores_borrables = df_u[df_u['usuario'] != 'admin']['usuario'].tolist()
+        st.warning("El vendedor no se borra de la base de datos, se 'Inhabilita' para que no pueda acceder, pero sus tickets se conservan.")
+        if not df_activos.empty:
+            vendedores_borrables = df_activos[df_activos['usuario'] != 'admin']['usuario'].tolist()
             if vendedores_borrables:
-                user_to_del = st.selectbox("Seleccionar Vendedor a Dar de Baja:", vendedores_borrables)
+                user_to_del = st.selectbox("Seleccionar Vendedor a Inhabilitar:", vendedores_borrables)
                 if st.button("🗑️ INHABILITAR VENDEDOR DE FORMA PERMANENTE"):
                     supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", user_to_del).execute()
                     st.success(f"✅ Vendedor {user_to_del} inhabilitado exitosamente."); time.sleep(1.5); st.rerun()
             else:
                 st.info("Solo queda el Administrador principal. No se puede eliminar.")
 
+    # --- NUEVA PESTAÑA: REACTIVAR USUARIOS ---
     with t_u5:
+        st.write("#### ♻️ Volver a Dar de Alta (Reactivar)")
+        st.info("Aquí aparecen los vendedores que fueron inhabilitados en el pasado.")
+        if not df_inactivos.empty:
+            vendedores_inactivos = df_inactivos['usuario'].tolist()
+            user_to_react = st.selectbox("Seleccionar Vendedor a Reactivar:", vendedores_inactivos)
+            if st.button("✅ ACTIVAR VENDEDOR NUEVAMENTE", type="primary"):
+                supabase.table("usuarios").update({"estado": "Activo"}).eq("usuario", user_to_react).execute()
+                st.success(f"✅ Vendedor {user_to_react} reactivado exitosamente. Ya puede iniciar sesión nuevamente."); time.sleep(1.5); st.rerun()
+        else:
+            st.info("No hay vendedores inhabilitados en este momento.")
+
+    with t_u6:
         st.write("#### 🎯 Análisis de Rendimiento y Asistencia")
-        if usrs.data:
-            sel_u_nombre = st.selectbox("Selecciona un vendedor para analizar:", df_u['nombre_completo'].tolist())
-            sel_u_id = df_u[df_u['nombre_completo'] == sel_u_nombre]['id'].iloc[0]
+        if not df_activos.empty:
+            sel_u_nombre = st.selectbox("Selecciona un vendedor para analizar:", df_activos['nombre_completo'].tolist())
+            sel_u_id = df_activos[df_activos['nombre_completo'] == sel_u_nombre]['id'].iloc[0]
             
             try:
                 today_date = datetime.now().date()
@@ -743,7 +769,6 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
             last_cierre_dt = get_last_cierre_dt()
             st.caption(f"⏱️ Monitoreando operaciones desde: {last_cierre_dt.strftime('%d/%m/%Y %H:%M')}")
 
-            # Extraemos todo lo necesario
             cabeceras = supabase.table("ventas_cabecera").select("*").gte("created_at", last_cierre_dt.isoformat()).execute()
             detalles = supabase.table("ventas_detalle").select("*, productos(costo_compra), ventas_cabecera(created_at, usuario_id)").execute()
             devs = supabase.table("devoluciones").select("*, productos(costo_compra)").gte("created_at", last_cierre_dt.isoformat()).execute()
@@ -755,7 +780,6 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
             cant_ven, cant_dev, cant_mer = 0, 0, 0
             df_rep_filtered = pd.DataFrame()
             
-            # --- SEPARACIÓN DE EFECTIVO Y DIGITAL (NUEVO REQUERIMIENTO) ---
             if cabeceras.data:
                 df_cab = pd.DataFrame(cabeceras.data)
                 ventas_efectivo = df_cab[df_cab['metodo_pago'] == 'Efectivo']['total_venta'].sum()
@@ -786,8 +810,7 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
                     tot_merma = df_mer_filt['perdida_monetaria'].sum()
                     cant_mer = int(df_mer_filt['cantidad'].sum())
                 
-            # CÁLCULO FINANCIERO EXACTO
-            caja_efectivo_pura = ventas_efectivo - tot_devs # Todo el dinero físico menos lo que se devolvió en billetes
+            caja_efectivo_pura = ventas_efectivo - tot_devs
             capital_real = tot_costo - costo_recup
             utilidad_pura = (tot_ventas - tot_devs) - capital_real - tot_merma
             

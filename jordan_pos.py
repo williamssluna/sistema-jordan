@@ -57,9 +57,11 @@ st.markdown("""
 # ==========================================
 # 4. MEMORIA DEL SISTEMA Y ESTADO (SESSION)
 # ==========================================
+# AQUÍ ESTABA EL ERROR: Restauré iny_alm_cod, iny_dev_cod e iny_merma_cod
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [],
     'carrito': [], 'last_ticket_html': None, 'ticket_cierre': None,
+    'iny_alm_cod': "", 'iny_dev_cod': "", 'iny_merma_cod': "",
     'api_nombre_sugerido': ""
 }
 for key, value in keys_to_init.items():
@@ -134,7 +136,6 @@ def get_lista_usuarios():
     except: return []
 
 def get_qr_image_path():
-    # Busca la imagen unificada qr_yape.png o .jpg (Servirá para Yape y Plin)
     extensions = ['.png', '.jpg', '.jpeg']
     for ext in extensions:
         path = f"qr_yape{ext}"
@@ -169,7 +170,7 @@ with st.sidebar.expander("⌚ Marcar Asistencia", expanded=False):
                     else:
                         st.error("❌ Usuario o Contraseña incorrectos.")
                 except Exception as e:
-                    st.error(f"❌ Error al registrar asistencia.")
+                    st.error(f"❌ Error al registrar asistencia: {e}")
             else:
                 st.warning("⚠️ Ingresa tu usuario y contraseña.")
 
@@ -190,7 +191,7 @@ if not st.session_state.logged_in:
                     st.session_state.user_perms = usr_data.data[0].get('permisos', [])
                     st.rerun()
                 else: st.error("❌ Acceso Denegado.")
-            except Exception as e: st.error("Error de conexión.")
+            except Exception as e: st.error(f"Error de conexión: {e}")
 else:
     st.sidebar.success(f"👤 Conectado: {st.session_state.user_name}")
     if st.sidebar.button("🚪 Cerrar Sesión Administrativa"):
@@ -384,7 +385,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
                                 supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
                                 supabase.table("devoluciones").insert({"usuario_id": vendedor_opciones[vendedor_sel], "producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
-                                st.success("✅ Devuelto."); time.sleep(1); st.rerun()
+                                st.session_state.iny_dev_cod = ""; st.success("✅ Devuelto."); time.sleep(1); st.rerun()
                             else: st.error("Selecciona usuario.")
             except: pass
         else:
@@ -507,7 +508,8 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                         if st.form_submit_button("➕ Sumar Stock", type="primary"):
                             if selected_prod != "...":
                                 cod_up = selected_prod.split(" - ")[0]
-                                c_stk, c_ini = int(df[df['codigo_barras'] == cod_up]['stock_actual'].iloc[0]), int(df[df['codigo_barras'] == cod_up]['stock_inicial'].iloc[0])
+                                c_stk = int(df[df['codigo_barras'] == cod_up]['stock_actual'].iloc[0])
+                                c_ini = int(df[df['codigo_barras'] == cod_up]['stock_inicial'].iloc[0])
                                 supabase.table("productos").update({"stock_actual": c_stk + add_stock, "stock_inicial": c_ini + add_stock}).eq("codigo_barras", cod_up).execute()
                                 st.success("✅ Actualizado."); time.sleep(0.5); st.rerun() 
                 

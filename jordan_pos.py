@@ -580,10 +580,8 @@ elif menu == "🧾 TICKETS" and "reportes" in st.session_state.user_perms:
 elif menu == "👥 VENDEDORES" and "gestion_usuarios" in st.session_state.user_perms:
     st.subheader("Panel de Control Gerencial (Vendedores)")
     
-    # NUEVA ARQUITECTURA DE PESTAÑAS (Incluye Reactivar)
     t_u1, t_u2, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Activos", "➕ Crear Nuevo", "⚙️ Permisos", "🗑️ Dar Baja", "♻️ Reactivar", "📊 Análisis"])
     
-    # Extraer TODOS los usuarios de la base de datos para filtrarlos
     usrs_db = supabase.table("usuarios").select("id, nombre_completo, usuario, clave, turno, permisos, estado").execute()
     df_u = pd.DataFrame()
     df_activos = pd.DataFrame()
@@ -649,7 +647,6 @@ elif menu == "👥 VENDEDORES" and "gestion_usuarios" in st.session_state.user_p
             else:
                 st.info("Solo queda el Administrador principal. No se puede eliminar.")
 
-    # --- NUEVA PESTAÑA: REACTIVAR USUARIOS ---
     with t_u5:
         st.write("#### ♻️ Volver a Dar de Alta (Reactivar)")
         st.info("Aquí aparecen los vendedores que fueron inhabilitados en el pasado.")
@@ -819,17 +816,20 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
                 
                 with tab_gen:
                     st.markdown("##### 💵 Balance Financiero (¿Dónde está el dinero?)")
-                    c1, c2, c3 = st.columns(3)
-                    c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Físicas (Efectivo)</div><div class='metric-value'>S/. {ventas_efectivo:.2f}</div></div>", unsafe_allow_html=True)
-                    c2.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Digitales (Yape/Tarj)</div><div class='metric-value metric-purple'>S/. {ventas_digital:.2f}</div></div>", unsafe_allow_html=True)
-                    c3.markdown(f"<div class='metric-box' style='border:2px solid #10b981;'><div class='metric-title'>EFECTIVO FÍSICO EN CAJA (Neta)</div><div class='metric-value metric-green'>S/. {caja_efectivo_pura:.2f}</div></div>", unsafe_allow_html=True)
+                    
+                    # --- NUEVO DISEÑO 4 COLUMNAS ---
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.markdown(f"<div class='metric-box' style='border:2px solid #3b82f6;'><div class='metric-title'>INGRESOS BRUTOS TOTALES</div><div class='metric-value metric-blue'>S/. {tot_ventas:.2f}</div></div>", unsafe_allow_html=True)
+                    c2.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Físicas (Efectivo)</div><div class='metric-value'>S/. {ventas_efectivo:.2f}</div></div>", unsafe_allow_html=True)
+                    c3.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Digitales (Yape/Tarj)</div><div class='metric-value metric-purple'>S/. {ventas_digital:.2f}</div></div>", unsafe_allow_html=True)
+                    c4.markdown(f"<div class='metric-box' style='border:2px solid #10b981;'><div class='metric-title'>EFECTIVO FÍSICO EN CAJA (Neta)</div><div class='metric-value metric-green'>S/. {caja_efectivo_pura:.2f}</div></div>", unsafe_allow_html=True)
                     
                     st.write("")
                     st.markdown("##### 📈 Rendimiento Operativo (Utilidad Global)")
-                    c4, c5, c6 = st.columns(3)
-                    c4.markdown(f"<div class='metric-box'><div class='metric-title'>Capital Invertido (Costo)</div><div class='metric-value metric-orange'>S/. {capital_real:.2f}</div></div>", unsafe_allow_html=True)
-                    c5.markdown(f"<div class='metric-box'><div class='metric-title'>Mermas (Pérdidas)</div><div class='metric-value metric-red'>- S/. {tot_merma:.2f}</div></div>", unsafe_allow_html=True)
-                    c6.markdown(f"<div class='metric-box'><div class='metric-title'>UTILIDAD NETA PURA</div><div class='metric-value metric-green'>S/. {utilidad_pura:.2f}</div></div>", unsafe_allow_html=True)
+                    c5, c6, c7 = st.columns(3)
+                    c5.markdown(f"<div class='metric-box'><div class='metric-title'>Capital Invertido (Costo)</div><div class='metric-value metric-orange'>S/. {capital_real:.2f}</div></div>", unsafe_allow_html=True)
+                    c6.markdown(f"<div class='metric-box'><div class='metric-title'>Mermas (Pérdidas)</div><div class='metric-value metric-red'>- S/. {tot_merma:.2f}</div></div>", unsafe_allow_html=True)
+                    c7.markdown(f"<div class='metric-box'><div class='metric-title'>UTILIDAD NETA PURA</div><div class='metric-value metric-green'>S/. {utilidad_pura:.2f}</div></div>", unsafe_allow_html=True)
                 
                 with tab_ven:
                     st.write("Selecciona un vendedor para ver sus métricas exactas del turno actual:")

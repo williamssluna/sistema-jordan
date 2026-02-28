@@ -2,13 +2,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 from supabase import create_client
 import pandas as pd
-import zxingcpp
-import cv2
-import numpy as np
 from datetime import datetime
 import time
 import requests
 import json
+import os
 
 # ==========================================
 # 1. CONEXIÓN AL CEREBRO DE BASE DE DATOS
@@ -18,6 +16,8 @@ KEY_SUPABASE = "sb_publishable_td5_vXX42LYc8PlTAbBgVg_-xCp-94r"
 supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
 
 st.set_page_config(page_title="JORDAN POS ERP", layout="wide", page_icon="📱")
+
+ERROR_ADMIN = "🚨 Error del sistema. Contactar al administrador."
 
 # ==========================================
 # 2. SEGURIDAD Y REGLAS DE NEGOCIO
@@ -34,7 +34,6 @@ st.markdown("""
     .main-header { font-size: 28px; font-weight: 900; color: #1e3a8a; text-align: center; padding: 20px; border-bottom: 4px solid #3b82f6; margin-bottom: 25px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);}
     .css-card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-left: 6px solid #3b82f6; margin-bottom: 20px; }
     
-    /* Efecto Hover en Tarjetas de Reporte */
     .metric-box { background: linear-gradient(145deg, #ffffff 0%, #f1f5f9 100%); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); text-align: center; border: 1px solid #e2e8f0; transition: transform 0.2s ease, box-shadow 0.2s ease; margin-bottom: 15px;}
     .metric-box:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
     .metric-title { font-size: 13px; color: #64748b; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;}
@@ -44,6 +43,9 @@ st.markdown("""
     .metric-red { color: #ef4444; }
     .metric-orange { color: #f59e0b; }
     .metric-blue { color: #3b82f6; }
+    
+    .qr-container { background: white; padding: 15px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; border: 2px dashed #3b82f6; margin-bottom: 15px;}
+    .qr-amount { font-size: 32px; font-weight: 900; color: #1e3a8a; margin-bottom: 10px;}
     
     .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #333; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.3; font-size: 14px; }
     .linea-corte { text-align: center; margin: 25px 0; border-bottom: 2px dashed #94a3b8; line-height: 0.1em; color: #64748b; font-size: 12px; font-weight: bold;}
@@ -58,8 +60,6 @@ st.markdown("""
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [],
     'carrito': [], 'last_ticket_html': None, 'ticket_cierre': None,
-    'iny_alm_cod': "", 'iny_dev_cod': "", 'iny_merma_cod': "",
-    'cam_v_key': 0, 'cam_a_key': 0, 'cam_d_key': 0, 'cam_m_key': 0,
     'api_nombre_sugerido': ""
 }
 for key, value in keys_to_init.items():
@@ -68,33 +68,26 @@ for key, value in keys_to_init.items():
 # ==========================================
 # 5. FUNCIONES DE APOYO Y MOTOR PRINCIPAL
 # ==========================================
+def render_dashboard_cards(ventas, devoluciones, caja_neta, capital, mermas, utilidad):
+    st.markdown("##### 💵 Balance Físico de Caja")
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Brutas</div><div class='metric-value'>S/. {ventas:.2f}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero Devuelto</div><div class='metric-value metric-red'>- S/. {devoluciones:.2f}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-box'><div class='metric-title'>CAJA NETA</div><div class='metric-value metric-green'>S/. {caja_neta:.2f}</div></div>", unsafe_allow_html=True)
+    
+    st.write("")
+    st.markdown("##### 📈 Rendimiento Operativo (Utilidad)")
+    c4, c5, c6 = st.columns(3)
+    c4.markdown(f"<div class='metric-box'><div class='metric-title'>Capital Invertido (Costo)</div><div class='metric-value metric-orange'>S/. {capital:.2f}</div></div>", unsafe_allow_html=True)
+    c5.markdown(f"<div class='metric-box'><div class='metric-title'>Mermas (Pérdidas)</div><div class='metric-value metric-red'>- S/. {mermas:.2f}</div></div>", unsafe_allow_html=True)
+    c6.markdown(f"<div class='metric-box'><div class='metric-title'>UTILIDAD NETA PURA</div><div class='metric-value metric-green'>S/. {utilidad:.2f}</div></div>", unsafe_allow_html=True)
+
 def get_last_cierre_dt():
     try:
         c_db = supabase.table("cierres_caja").select("fecha_cierre").order("fecha_cierre", desc=True).limit(1).execute()
         if c_db.data: return pd.to_datetime(c_db.data[0]['fecha_cierre'], utc=True)
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True)
-
-def scan_pos(image):
-    if not image: return None
-    try:
-        file_bytes = np.asarray(bytearray(image.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, 1)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enh = clahe.apply(gray)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-        scale_down = cv2.resize(gray, None, fx=0.6, fy=0.6, interpolation=cv2.INTER_AREA)
-        scale_up = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
-        
-        variantes = [img, gray, enh, thresh, scale_down, scale_up]
-        for var in variantes:
-            for rot in [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                test_img = cv2.rotate(var, rot) if rot else var
-                res = zxingcpp.read_barcodes(test_img)
-                if res: return res[0].text
-        return None
-    except: return None
 
 def load_data(table):
     try:
@@ -140,6 +133,15 @@ def get_lista_usuarios():
         return res.data if res.data else []
     except: return []
 
+def get_qr_image_path():
+    # Busca la imagen unificada qr_yape.png o .jpg (Servirá para Yape y Plin)
+    extensions = ['.png', '.jpg', '.jpeg']
+    for ext in extensions:
+        path = f"qr_yape{ext}"
+        if os.path.exists(path):
+            return path
+    return None
+
 # ==========================================
 # 6. ESTRUCTURA PRINCIPAL Y SIDEBAR (ERP)
 # ==========================================
@@ -167,7 +169,7 @@ with st.sidebar.expander("⌚ Marcar Asistencia", expanded=False):
                     else:
                         st.error("❌ Usuario o Contraseña incorrectos.")
                 except Exception as e:
-                    st.error(f"❌ Error al registrar asistencia: {e}")
+                    st.error(f"❌ Error al registrar asistencia.")
             else:
                 st.warning("⚠️ Ingresa tu usuario y contraseña.")
 
@@ -188,7 +190,7 @@ if not st.session_state.logged_in:
                     st.session_state.user_perms = usr_data.data[0].get('permisos', [])
                     st.rerun()
                 else: st.error("❌ Acceso Denegado.")
-            except Exception as e: st.error(f"Error de conexión: {e}")
+            except Exception as e: st.error("Error de conexión.")
 else:
     st.sidebar.success(f"👤 Conectado: {st.session_state.user_name}")
     if st.sidebar.button("🚪 Cerrar Sesión Administrativa"):
@@ -218,25 +220,18 @@ if menu == "🛒 VENTAS":
 
     col_v1, col_v2 = st.columns([1.5, 1.4])
     with col_v1:
-        st.subheader("🔍 Ingreso de Productos")
+        st.subheader("🔍 Ingreso Rápido (Láser o Teclado)")
         with st.form("form_manual_barcode", clear_on_submit=True):
+            st.info("👇 Haz clic en la casilla de abajo y dispara el lector láser.")
             col_mb1, col_mb2 = st.columns([3, 1])
-            manual_code = col_mb1.text_input("Tipear Código Numérico")
-            add_manual = col_mb2.form_submit_button("➕ Agregar")
+            manual_code = col_mb1.text_input("Código Numérico", key="codigo_venta_laser")
+            add_manual = col_mb2.form_submit_button("➕ Procesar")
             if add_manual and manual_code:
                 if procesar_codigo_venta(manual_code): time.sleep(0.5); st.rerun()
 
-        with st.expander("📷 ABRIR ESCÁNER TÁCTIL", expanded=False):
-            img = st.camera_input("Lector", key=f"scanner_venta_{st.session_state.cam_v_key}", label_visibility="hidden")
-            if img:
-                code = scan_pos(img)
-                if code:
-                    if procesar_codigo_venta(code):
-                        st.session_state.cam_v_key += 1; time.sleep(0.5); st.rerun()
-                else: st.error("⚠️ Foto borrosa.")
-
         st.divider()
-        search = st.text_input("Búsqueda por Nombre")
+        st.write("Búsqueda Manual (Si no hay código de barras)")
+        search = st.text_input("Escribe el Nombre del Producto")
         if search:
             try:
                 res_s = supabase.table("productos").select("*, marcas(nombre)").ilike("nombre", f"%{search}%").execute()
@@ -269,6 +264,7 @@ if menu == "🛒 VENTAS":
                 total_venta += subtotal
             
             st.divider()
+            
             st.markdown(f"<h2 style='color:#16a34a; text-align:center;'>TOTAL: S/. {total_venta:.2f}</h2>", unsafe_allow_html=True)
             
             lista_vendedores = get_lista_usuarios()
@@ -277,15 +273,34 @@ if menu == "🛒 VENTAS":
             
             pago = st.selectbox("Medio de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
             
+            # --- QR UNIFICADO ESTÁTICO ---
             ref_pago = ""
             if pago in ["Yape", "Plin"]:
-                ref_pago = st.text_input("📱 N° de Aprobación (Obligatorio)")
+                st.markdown(f"""
+                <div class="qr-container">
+                    <div>Muéstrale la pantalla al cliente para el pago:</div>
+                    <div class="qr-amount">S/. {total_venta:.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                qr_path = get_qr_image_path()
+                col_q1, col_q2, col_q3 = st.columns([1,2,1])
+                with col_q2:
+                    if qr_path:
+                        st.image(qr_path, use_container_width=True)
+                    else:
+                        st.info("ℹ️ Sube la imagen 'qr_yape.png' a GitHub y aparecerá aquí automáticamente para Yape y Plin.")
+                
+                ref_pago = st.text_input("📱 Número de Aprobación (Obligatorio)")
+                
+            elif pago == "Tarjeta VISA/MC":
+                ref_pago = st.text_input("💳 N° de Referencia del Equipo (Obligatorio)")
             
             if st.button("🏁 PROCESAR VENTA", type="primary"):
                 if vendedor_seleccionado == "Seleccionar...":
                     st.error("🛑 Selecciona tu usuario primero.")
-                elif pago in ["Yape", "Plin"] and not ref_pago:
-                    st.error("🛑 Ingresa la referencia del Yape/Plin.")
+                elif pago in ["Yape", "Plin", "Tarjeta VISA/MC"] and not ref_pago:
+                    st.error(f"🛑 Ingresa la referencia del pago.")
                 else:
                     try:
                         vendedor_id = vendedor_opciones[vendedor_seleccionado]
@@ -305,8 +320,6 @@ if menu == "🛒 VENTAS":
                             items_html += f"{item['nombre'][:20]:<20} <br> {item['cant']:>2} x S/. {item['precio']:.2f} = S/. {item['precio']*item['cant']:.2f}<br><br>"
                         
                         fecha_tk = datetime.now().strftime('%d/%m/%Y %H:%M')
-                        
-                        # IMPORTANTE: HTML SIN SANGRÍA PARA QUE NO SE VEA COMO BLOQUE DE CÓDIGO
                         cuerpo_base = f"""--------------------------------<br>
 TICKET: {t_num}<br>
 FECHA: {fecha_tk}<br>
@@ -350,7 +363,8 @@ MÉTODO: {pago} {f'(Ref: {ref_pago})' if ref_pago else ''}<br>
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones")
-    search_dev = st.text_input("Ingresa el Número de Ticket o Código de Barras")
+    st.info("Usa el lector láser para apuntar al código de barras del producto devuelto.")
+    search_dev = st.text_input("Código de Barras o N° de Ticket")
     lista_vendedores = get_lista_usuarios()
     vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
     
@@ -370,7 +384,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
                                 supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
                                 supabase.table("devoluciones").insert({"usuario_id": vendedor_opciones[vendedor_sel], "producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
-                                st.session_state.iny_dev_cod = ""; st.success("✅ Devuelto."); time.sleep(1); st.rerun()
+                                st.success("✅ Devuelto."); time.sleep(1); st.rerun()
                             else: st.error("Selecciona usuario.")
             except: pass
         else:
@@ -397,34 +411,35 @@ elif menu == "🔄 DEVOLUCIONES":
 # ==========================================
 elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms:
     st.subheader("Gestión de Inventario Maestro")
-    t1, t2, t3 = st.tabs(["➕ Ingreso Mercadería", "⚙️ Configuración", "📋 Inventario General"])
+    t1, t2, t3 = st.tabs(["➕ Ingreso Mercadería", "⚙️ Configuración Catálogos", "📋 Inventario General"])
     
     with t1:
         if "inventario_agregar" in st.session_state.user_perms:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
-            with st.expander("📷 ABRIR ESCÁNER ALMACÉN", expanded=True):
-                img_a = st.camera_input("Scanner Almacén", key=f"cam_almacen_{st.session_state.cam_a_key}")
-                if img_a:
-                    code_a = scan_pos(img_a)
-                    if code_a: 
+            st.info("👇 Haz clic en la casilla de abajo y dispara el lector láser para ingresar mercadería.")
+            with st.form("form_nuevo_trigger", clear_on_submit=False):
+                col_a1, col_a2 = st.columns([3, 1])
+                code_a = col_a1.text_input("Dispara el Láser Aquí", key="trigger_almacen")
+                if col_a2.form_submit_button("🔍 Cargar Código"):
+                    if code_a:
                         check = supabase.table("productos").select("*").eq("codigo_barras", code_a).execute()
                         if check.data:
                             st.error("⚠️ EL PRODUCTO YA EXISTE. Ve a la pestaña Inventario para sumar stock.")
-                            st.session_state.cam_a_key += 1 
                         else:
                             st.session_state.iny_alm_cod = code_a
                             st.session_state.api_nombre_sugerido = fetch_upc_api(code_a)
-                            st.session_state.cam_a_key += 1; st.rerun() 
             
             cats, mars = load_data("categorias"), load_data("marcas")
             with st.form("form_nuevo", clear_on_submit=True):
-                c_cod = st.text_input("Código de Barras", value=st.session_state.iny_alm_cod)
+                c_cod = st.text_input("Código de Barras Registrado", value=st.session_state.iny_alm_cod)
                 c_nom = st.text_input("Nombre del Producto", value=st.session_state.api_nombre_sugerido)
                 f1, f2, f3, f8 = st.columns(4)
                 f_cat = f1.selectbox("Categoría", cats['nombre'].tolist() if not cats.empty else ["Vacío"])
                 f_mar = f2.selectbox("Marca", mars['nombre'].tolist() if not mars.empty else ["Vacío"])
                 f_cal = f3.selectbox("Calidad", ["Original", "Genérico", "AAA", "Premium", "OEM"])
-                f_comp = f8.selectbox("Compatibilidad", ["Universal", "iPhone", "Samsung", "Xiaomi", "Motorola", "Huawei", "Honor", "Otro"])
+                
+                opciones_comp = ["Universal", "iPhone", "Samsung", "Xiaomi", "Motorola", "Huawei", "Honor", "Oppo", "Otro"]
+                f_comp = f8.selectbox("Compatibilidad", opciones_comp)
                 
                 f4, f5, f6, f7 = st.columns(4)
                 f_costo = f4.number_input("Costo Compra (S/.)", min_value=0.0, step=0.5)
@@ -432,7 +447,7 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                 f_venta = f5.number_input("Precio Venta (S/.)", min_value=0.0, step=0.5)
                 f_stock = f7.number_input("Stock Inicial", min_value=1, step=1)
                 
-                if st.form_submit_button("🚀 GUARDAR PRODUCTO", type="primary"):
+                if st.form_submit_button("🚀 GUARDAR EN BASE DE DATOS", type="primary"):
                     if c_cod and c_nom and not cats.empty and not mars.empty:
                         cid, mid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0]), int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
                         supabase.table("productos").insert({"codigo_barras": c_cod, "nombre": c_nom, "categoria_id": cid, "marca_id": mid, "calidad": f_cal, "compatibilidad": f_comp, "costo_compra": f_costo, "precio_lista": f_venta, "precio_minimo": f_pmin, "stock_actual": f_stock, "stock_inicial": f_stock}).execute()
@@ -442,6 +457,8 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
     
     with t2:
         if "inventario_agregar" in st.session_state.user_perms or "inventario_modificar" in st.session_state.user_perms:
+            st.write("### Catálogos del Sistema")
+            st.info("Agrega las marcas y categorías necesarias (ej. Categorías: Fundas, Cargadores, Audífonos, Micas).")
             c_left, c_right = st.columns(2)
             with c_left:
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -490,8 +507,7 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
                         if st.form_submit_button("➕ Sumar Stock", type="primary"):
                             if selected_prod != "...":
                                 cod_up = selected_prod.split(" - ")[0]
-                                c_stk = int(df[df['codigo_barras'] == cod_up]['stock_actual'].iloc[0])
-                                c_ini = int(df[df['codigo_barras'] == cod_up]['stock_inicial'].iloc[0])
+                                c_stk, c_ini = int(df[df['codigo_barras'] == cod_up]['stock_actual'].iloc[0]), int(df[df['codigo_barras'] == cod_up]['stock_inicial'].iloc[0])
                                 supabase.table("productos").update({"stock_actual": c_stk + add_stock, "stock_inicial": c_ini + add_stock}).eq("codigo_barras", cod_up).execute()
                                 st.success("✅ Actualizado."); time.sleep(0.5); st.rerun() 
                 
@@ -505,7 +521,7 @@ elif menu == "📦 ALMACÉN" and "inventario_ver" in st.session_state.user_perms
 # ==========================================
 elif menu == "⚠️ MERMAS/DAÑOS" and "mermas" in st.session_state.user_perms:
     st.subheader("Dar de Baja Productos Dañados")
-    m_cod = st.text_input("Código de Barras del Producto Dañado")
+    m_cod = st.text_input("Código de Barras (Dispara láser)")
     if m_cod:
         try:
             p_inf = supabase.table("productos").select("*").eq("codigo_barras", m_cod).execute()
@@ -588,7 +604,6 @@ elif menu == "👥 USUARIOS" and "gestion_usuarios" in st.session_state.user_per
                 today_date = datetime.now().date()
                 curr_month = datetime.now().month
                 
-                # --- ASISTENCIA ---
                 ast_db = supabase.table("asistencia").select("*").eq("usuario_id", sel_u_id).execute()
                 df_a = pd.DataFrame(ast_db.data)
                 h_in, h_out, hrs_hoy, dias_mes, hrs_mes = "--:--", "--:--", 0.0, 0, 0.0
@@ -616,7 +631,6 @@ elif menu == "👥 USUARIOS" and "gestion_usuarios" in st.session_state.user_per
                             if not i_ts.empty and not s_ts.empty:
                                 hrs_mes += (s_ts.max() - i_ts.min()).total_seconds() / 3600
 
-                # --- VENTAS ---
                 v_db = supabase.table("ventas_cabecera").select("total_venta, created_at").eq("usuario_id", sel_u_id).execute()
                 df_v = pd.DataFrame(v_db.data)
                 v_hoy, v_mes = 0.0, 0.0
@@ -639,7 +653,7 @@ elif menu == "👥 USUARIOS" and "gestion_usuarios" in st.session_state.user_per
                 c5.markdown(f"<div class='metric-box'><div class='metric-title'>Días Asistidos</div><div class='metric-value-small'>{dias_mes} Días</div></div>", unsafe_allow_html=True)
                 c6.markdown(f"<div class='metric-box'><div class='metric-title'>Horas Totales</div><div class='metric-value-small'>{hrs_mes:.1f} Hrs</div></div>", unsafe_allow_html=True)
                 c7.markdown(f"<div class='metric-box'><div class='metric-title'>Total Recaudado</div><div class='metric-value-small metric-blue'>S/. {v_mes:.2f}</div></div>", unsafe_allow_html=True)
-            except Exception as e: st.error("Faltan registros para generar el análisis completo.")
+            except: st.info("Generando cálculos...")
 
 # ==========================================
 # 📊 MÓDULO 5: REPORTES Y CIERRE DE CAJA
@@ -732,28 +746,38 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
             utilidad_pura = caja_esperada - capital_real - tot_merma
             
             if "reportes" in st.session_state.user_perms:
-                st.markdown("##### 💵 Balance de Caja (Dinero Físico)")
-                c1, c2, c3 = st.columns(3)
-                c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Brutas</div><div class='metric-value'>S/. {tot_ventas:.2f}</div></div>", unsafe_allow_html=True)
-                c2.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero Devuelto</div><div class='metric-value metric-red'>- S/. {tot_devs:.2f}</div></div>", unsafe_allow_html=True)
-                c3.markdown(f"<div class='metric-box'><div class='metric-title'>CAJA NETA</div><div class='metric-value metric-green'>S/. {caja_esperada:.2f}</div></div>", unsafe_allow_html=True)
+                tab_gen, tab_ven = st.tabs(["📊 Resumen General del Turno", "👤 Rendimiento por Vendedor"])
                 
-                st.write("")
-                st.markdown("##### 📈 Rendimiento Operativo (Utilidad)")
-                c4, c5, c6 = st.columns(3)
-                c4.markdown(f"<div class='metric-box'><div class='metric-title'>Capital Invertido (Costo)</div><div class='metric-value metric-orange'>S/. {capital_real:.2f}</div></div>", unsafe_allow_html=True)
-                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Mermas (Pérdidas)</div><div class='metric-value metric-red'>- S/. {tot_merma:.2f}</div></div>", unsafe_allow_html=True)
-                c6.markdown(f"<div class='metric-box'><div class='metric-title'>UTILIDAD NETA PURA</div><div class='metric-value metric-green'>S/. {utilidad_pura:.2f}</div></div>", unsafe_allow_html=True)
-            
+                with tab_gen:
+                    render_dashboard_cards(tot_ventas, tot_devs, caja_esperada, capital_real, tot_merma, utilidad_pura)
+                
+                with tab_ven:
+                    st.write("Selecciona un vendedor para ver sus métricas exactas del turno actual:")
+                    if not df_rep_filtered.empty:
+                        vendedores_activos = df_rep_filtered['Vendedor'].unique()
+                        sel_v = st.selectbox("Vendedor:", vendedores_activos)
+                        
+                        df_v_ventas = df_rep_filtered[df_rep_filtered['Vendedor'] == sel_v]
+                        v_ventas = df_v_ventas['subtotal'].sum()
+                        v_costo = df_v_ventas['Costo'].sum()
+                        v_utilidad = v_ventas - v_costo
+                        
+                        c1, c2, c3 = st.columns(3)
+                        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas de {sel_v}</div><div class='metric-value'>S/. {v_ventas:.2f}</div></div>", unsafe_allow_html=True)
+                        c2.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value metric-orange'>- S/. {v_costo:.2f}</div></div>", unsafe_allow_html=True)
+                        c3.markdown(f"<div class='metric-box'><div class='metric-title'>Ganancia (Utilidad)</div><div class='metric-value metric-green'>S/. {v_utilidad:.2f}</div></div>", unsafe_allow_html=True)
+                    else: st.info("No hay ventas registradas en este turno.")
+                    
             st.divider()
             
             if "cierre_caja" in st.session_state.user_perms:
                 st.markdown('<div class="cierre-box">', unsafe_allow_html=True)
                 st.write("### 🛑 EJECUTAR CIERRE DE CAJA (FIN DE TURNO)")
                 with st.form("form_cierre", clear_on_submit=True):
-                    st.write("El Stock Actual se convertirá automáticamente en tu nuevo Stock Inicial.")
+                    st.write("Al realizar el corte Z, los reportes visuales se pondrán a S/. 0.00 y tu Stock Actual se convertirá automáticamente en tu nuevo Stock Inicial.")
                     if st.form_submit_button("🔒 APROBAR CIERRE DE CAJA DIRECTO", type="primary"):
                         supabase.table("cierres_caja").insert({"total_ventas": tot_ventas, "total_devoluciones": tot_devs, "utilidad": utilidad_pura, "total_mermas": tot_merma}).execute()
+                        
                         prods_res = supabase.table("productos").select("codigo_barras, stock_actual").execute()
                         if prods_res.data:
                             for prod in prods_res.data:
@@ -768,4 +792,4 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
                         }
                         st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
-        except Exception as e: st.error(f"Error cargando los cálculos de caja.")
+        except Exception as e: st.error(f"Error al cargar reportes.")

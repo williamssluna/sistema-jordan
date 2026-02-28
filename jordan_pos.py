@@ -8,7 +8,6 @@ import numpy as np
 from datetime import datetime
 import time
 import requests
-import json
 
 # ==========================================
 # 1. CONEXIÓN AL CEREBRO DE BASE DE DATOS
@@ -22,7 +21,13 @@ st.set_page_config(page_title="JORDAN POS ERP", layout="wide", page_icon="📱")
 ERROR_ADMIN = "🚨 Error del sistema. Contactar al administrador."
 
 # ==========================================
-# 2. DISEÑO VISUAL Y ESTILOS (CSS)
+# 2. SEGURIDAD: VERIFICACIÓN DE CONTRASEÑA
+# ==========================================
+def verify_password(input_password, stored_password):
+    return input_password == stored_password
+
+# ==========================================
+# 3. DISEÑO VISUAL Y ESTILOS (CSS)
 # ==========================================
 st.markdown("""
     <style>
@@ -44,7 +49,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. MEMORIA DEL SISTEMA Y ESTADO (SESSION)
+# 4. MEMORIA DEL SISTEMA Y ESTADO (SESSION)
 # ==========================================
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [], 'turno_id': None,
@@ -57,7 +62,7 @@ for key, value in keys_to_init.items():
     if key not in st.session_state: st.session_state[key] = value
 
 # ==========================================
-# 4. FUNCIONES DE APOYO Y MOTOR PRINCIPAL
+# 5. FUNCIONES DE APOYO Y MOTOR PRINCIPAL
 # ==========================================
 def scan_pos(image):
     if not image: return None
@@ -125,7 +130,7 @@ def get_lista_usuarios():
     except: return []
 
 # ==========================================
-# 5. ESTRUCTURA PRINCIPAL Y SIDEBAR (ERP)
+# 6. ESTRUCTURA PRINCIPAL Y SIDEBAR (ERP)
 # ==========================================
 st.markdown('<div class="main-header">📱 ACCESORIOS JORDAN | ERP AVANZADO</div>', unsafe_allow_html=True)
 
@@ -135,7 +140,7 @@ menu_options = ["🛒 VENTAS (POS)", "🔄 DEVOLUCIONES"]
 # --- SIDEBAR: ASISTENCIA Y LOGIN DE MÓDULOS ---
 st.sidebar.markdown("### 🏢 Control de Personal")
 
-# 1. Asistencia (Corregido con validación de contraseña visible)
+# 1. Asistencia
 with st.sidebar.expander("⌚ Marcar Asistencia", expanded=False):
     with st.form("form_asistencia", clear_on_submit=True):
         usr_ast = st.text_input("Usuario")
@@ -145,13 +150,17 @@ with st.sidebar.expander("⌚ Marcar Asistencia", expanded=False):
         btn_out = c_a2.form_submit_button("🔴 Salida")
         if btn_in or btn_out:
             if usr_ast and pwd_ast:
-                usr_data = supabase.table("usuarios").select("*").eq("usuario", usr_ast).execute()
-                if usr_data.data and usr_data.data[0].get('clave') == pwd_ast:
-                    tipo = "Ingreso" if btn_in else "Salida"
-                    supabase.table("asistencia").insert({"usuario_id": usr_data.data[0]['id'], "tipo_marcacion": tipo}).execute()
-                    st.success(f"✅ {tipo} registrado para {usr_data.data[0]['nombre_completo']}")
-                else:
-                    st.error("❌ Usuario o Contraseña incorrectos.")
+                try:
+                    usr_data = supabase.table("usuarios").select("*").eq("usuario", usr_ast).execute()
+                    if usr_data.data and verify_password(pwd_ast, usr_data.data[0].get('clave')):
+                        tipo = "Ingreso" if btn_in else "Salida"
+                        # Insertamos usando usuario_id
+                        supabase.table("asistencia").insert({"usuario_id": usr_data.data[0]['id'], "tipo_marcacion": tipo}).execute()
+                        st.success(f"✅ {tipo} registrado para {usr_data.data[0]['nombre_completo']}")
+                    else:
+                        st.error("❌ Usuario o Contraseña incorrectos.")
+                except Exception as e:
+                    st.error(f"❌ Error de BD al registrar asistencia: {e}")
             else:
                 st.warning("⚠️ Ingresa tu usuario y contraseña.")
 
@@ -159,21 +168,23 @@ st.sidebar.divider()
 
 # 2. Login para Módulos de Administración
 if not st.session_state.logged_in:
-    st.sidebar.markdown("#### 🔐 Acceso a Módulos Restringidos")
+    st.sidebar.markdown("#### 🔐 Acceso Administrativo")
     with st.sidebar.form("form_login"):
         l_usr = st.text_input("Usuario Administrador / Encargado")
         l_pwd = st.text_input("Contraseña", type="password")
         if st.form_submit_button("Iniciar Sesión", type="primary"):
-            usr_data = supabase.table("usuarios").select("*").eq("usuario", l_usr).execute()
-            # Validación con contraseña en texto plano (columna 'clave')
-            if usr_data.data and usr_data.data[0].get('clave') == l_pwd:
-                st.session_state.logged_in = True
-                st.session_state.user_id = usr_data.data[0]['id']
-                st.session_state.user_name = usr_data.data[0]['nombre_completo']
-                st.session_state.user_perms = usr_data.data[0].get('permisos', [])
-                st.rerun()
-            else:
-                st.error("❌ Acceso Denegado. Revisa tus credenciales.")
+            try:
+                usr_data = supabase.table("usuarios").select("*").eq("usuario", l_usr).execute()
+                if usr_data.data and verify_password(l_pwd, usr_data.data[0].get('clave')):
+                    st.session_state.logged_in = True
+                    st.session_state.user_id = usr_data.data[0]['id']
+                    st.session_state.user_name = usr_data.data[0]['nombre_completo']
+                    st.session_state.user_perms = usr_data.data[0].get('permisos', [])
+                    st.rerun()
+                else:
+                    st.error("❌ Acceso Denegado. Revisa tus credenciales.")
+            except Exception as e:
+                st.error("Error de conexión.")
 else:
     st.sidebar.success(f"👤 Conectado: {st.session_state.user_name}")
     if st.sidebar.button("🚪 Cerrar Sesión Administrativa"):
@@ -197,12 +208,6 @@ menu = st.sidebar.radio("Navegación", menu_options)
 # 🛒 MÓDULO 1: VENTAS (ABIERTO A TODOS)
 # ==========================================
 if menu == "🛒 VENTAS (POS)":
-    # Impresión JS Automática Silenciosa
-    if st.session_state.last_ticket_html:
-        components.html(st.session_state.last_ticket_html, width=0, height=0)
-        st.success("🖨️ Imprimiendo ticket térmico doble...")
-        st.session_state.last_ticket_html = None 
-
     col_v1, col_v2 = st.columns([1.5, 1.4])
     with col_v1:
         st.subheader("🔍 Ingreso de Productos")
@@ -257,18 +262,19 @@ if menu == "🛒 VENTAS (POS)":
             st.divider()
             st.markdown(f"<h2 style='color:#16a34a; text-align:center;'>TOTAL: S/. {total_venta:.2f}</h2>", unsafe_allow_html=True)
             
-            # --- IDENTIFICACIÓN DEL VENDEDOR EN EL MOSTRADOR COMPARTIDO ---
+            # --- IDENTIFICACIÓN DEL VENDEDOR: SOLO MUESTRA EL USUARIO ---
             lista_vendedores = get_lista_usuarios()
-            vendedor_opciones = {f"{v['nombre_completo']} ({v['usuario']})": v['id'] for v in lista_vendedores}
-            vendedor_seleccionado = st.selectbox("👤 ¿Quién está realizando esta venta?", ["Seleccionar Vendedor..."] + list(vendedor_opciones.keys()))
+            vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
+            vendedor_seleccionado = st.selectbox("👤 Selecciona tu usuario para registrar la venta:", ["Seleccionar Vendedor..."] + list(vendedor_opciones.keys()))
             
             pago = st.selectbox("Medio de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
+            doc = st.selectbox("Comprobante a emitir", ["Ticket de Venta", "Boleta Electrónica", "Ticket Interno"])
             
             ref_pago = ""
             if pago in ["Yape", "Plin"]:
                 ref_pago = st.text_input("📱 Número de Aprobación / Referencia de Pago (Obligatorio)")
             
-            if st.button("🏁 PROCESAR VENTA E IMPRIMIR", type="primary"):
+            if st.button("🏁 PROCESAR VENTA", type="primary"):
                 if vendedor_seleccionado == "Seleccionar Vendedor...":
                     st.error("🛑 Debes seleccionar tu usuario para registrar la venta.")
                 elif pago in ["Yape", "Plin"] and not ref_pago:
@@ -278,9 +284,8 @@ if menu == "🛒 VENTAS (POS)":
                         vendedor_id = vendedor_opciones[vendedor_seleccionado]
                         t_num = f"AJ-{int(time.time())}"
                         
-                        # Guardar Venta (Cabecera)
                         res_cab = supabase.table("ventas_cabecera").insert({
-                            "ticket_numero": t_num, "total_venta": total_venta, "metodo_pago": pago, "tipo_comprobante": "Ticket",
+                            "ticket_numero": t_num, "total_venta": total_venta, "metodo_pago": pago, "tipo_comprobante": doc,
                             "usuario_id": vendedor_id, "referencia_pago": ref_pago
                         }).execute()
                         v_id = res_cab.data[0]['id']
@@ -292,51 +297,51 @@ if menu == "🛒 VENTAS (POS)":
                             supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - item['cant']}).eq("codigo_barras", item['id']).execute()
                             items_html += f"{item['nombre'][:20]:<20} <br> {item['cant']:>2} x S/. {item['precio']:.2f} = S/. {item['precio']*item['cant']:.2f}<br><br>"
                         
-                        # HTML para Impresión Dual
+                        # Generación del Ticket Visual para Pantalla y para Historial (SIN JS de impresión oculta)
                         fecha_tk = datetime.now().strftime('%d/%m/%Y %H:%M')
-                        nombre_vendedor_ticket = vendedor_seleccionado.split(" (")[0]
-                        cuerpo_ticket = f"""
-                        --------------------------------<br>
-                        TICKET: {t_num}<br>
-                        FECHA: {fecha_tk}<br>
-                        CAJERO: {nombre_vendedor_ticket}<br>
-                        --------------------------------<br>
-                        {items_html}
-                        --------------------------------<br>
-                        <b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>
-                        MÉTODO: {pago} {f'(Ref: {ref_pago})' if ref_pago else ''}<br>
-                        --------------------------------<br>
+                        ticket_html = f"""
+                        <div class="ticket-termico">
+                            <center><b>ACCESORIOS JORDAN</b></center>
+                            <center>{doc}</center>
+                            --------------------------------<br>
+                            TICKET: {t_num}<br>
+                            FECHA: {fecha_tk}<br>
+                            CAJERO: {vendedor_seleccionado}<br>
+                            --------------------------------<br>
+                            {items_html}
+                            --------------------------------<br>
+                            <b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>
+                            MÉTODO: {pago} {f'(Ref: {ref_pago})' if ref_pago else ''}<br>
+                            --------------------------------<br>
+                            <center>¡Gracias por su compra!</center>
+                        </div>
                         """
                         
-                        ticket_dual_js = f"""
-                        <html><head><style>
-                        body {{ font-family: 'Courier New', monospace; font-size: 14px; color: black; background: white; }}
-                        .ticket-termico {{ padding: 15px; border: 1px dashed #333; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2;}}
-                        @media print {{ .page-break {{ page-break-after: always; }} }}
-                        </style></head><body>
-                        <div class="ticket-termico"><center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>{cuerpo_ticket}<center>¡Gracias por su compra!</center></div>
-                        <div class="page-break"></div>
-                        <div class="ticket-termico"><center><b>ACCESORIOS JORDAN</b><br>COPIA CONTROL INTERNO</center><br>{cuerpo_ticket}</div>
-                        <script>window.onload = function() {{ window.print(); }}</script>
-                        </body></html>
-                        """
+                        # Guardar en BD para el control
+                        supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": ticket_html}).execute()
                         
-                        supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": ticket_dual_js}).execute()
-                        
-                        st.session_state.last_ticket_html = ticket_dual_js
+                        st.session_state.last_ticket_html = ticket_html
                         st.session_state.carrito = []
                         st.rerun() 
-                    except Exception as e: st.error(ERROR_ADMIN)
+                    except Exception as e: st.error(f"Error al procesar: {e}")
+
+        # Mostrar ticket generado visualmente en pantalla
+        if st.session_state.last_ticket_html:
+            st.success("✅ Venta procesada correctamente.")
+            st.markdown(st.session_state.last_ticket_html, unsafe_allow_html=True)
+            if st.button("Limpiar Pantalla", type="primary"):
+                st.session_state.last_ticket_html = None
+                st.rerun()
 
 # ==========================================
-# 🔄 MÓDULO 3: DEVOLUCIONES (ABIERTO A TODOS)
+# 🔄 MÓDULO 3: DEVOLUCIONES (ABIERTO)
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones y Reembolsos")
     search_dev = st.text_input("Ingresa el Número de Ticket (AJ-...) o el Código de Barras")
     
     lista_vendedores = get_lista_usuarios()
-    vendedor_opciones = {f"{v['nombre_completo']} ({v['usuario']})": v['id'] for v in lista_vendedores}
+    vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
     
     if search_dev:
         if "AJ-" in search_dev.upper():
@@ -431,7 +436,7 @@ elif menu == "📦 ALMACÉN PRO" and "inventario_ver" in st.session_state.user_p
     
     with t2:
         if "inventario_agregar" in st.session_state.user_perms:
-            st.info("Desde aquí puedes configurar tus listas desplegables.")
+            st.info("Configura Categorías y Marcas. (Misma lógica anterior)")
         else:
             st.error("🚫 No tienes permisos para modificar configuraciones.")
 
@@ -492,12 +497,12 @@ elif menu == "🧾 REGISTRO DE TICKETS" and "reportes" in st.session_state.user_
             df_tks = pd.DataFrame(tks.data)
             df_tks['fecha_format'] = pd.to_datetime(df_tks['fecha']).dt.strftime('%d/%m/%Y %H:%M')
             opciones = [f"{row['ticket_numero']} - {row['fecha_format']}" for _, row in df_tks.iterrows()]
-            sel_tk = st.selectbox("Selecciona un ticket para visualizar / reimprimir", opciones)
+            sel_tk = st.selectbox("Selecciona un ticket para visualizar", opciones)
             if sel_tk:
                 tk_num = sel_tk.split(" - ")[0]
                 html_raw = df_tks[df_tks['ticket_numero'] == tk_num]['html_payload'].iloc[0]
-                html_safe = html_raw.replace("<script>window.onload = function() { window.print(); }</script>", "")
-                st.components.v1.html(html_safe, height=600, scrolling=True)
+                # Renderizamos el HTML tal cual fue guardado (Sin JS automático)
+                st.markdown(html_raw, unsafe_allow_html=True)
         else: st.info("No hay tickets emitidos aún.")
     except: st.error(ERROR_ADMIN)
 
@@ -510,19 +515,20 @@ elif menu == "👥 GESTIÓN DE USUARIOS" and "gestion_usuarios" in st.session_st
     
     with t_u1:
         # Aquí traemos la columna 'clave' para que el administrador PUEDA VER LAS CONTRASEÑAS en texto plano.
-        usrs = supabase.table("usuarios").select("id, nombre_completo, usuario, clave, turno, permisos, estado").execute()
+        usrs = supabase.table("usuarios").select("id, nombre_completo, usuario, clave, turno, estado").execute()
         if usrs.data:
             df_u = pd.DataFrame(usrs.data)
             st.write("Visualización de Usuarios (Contraseñas Visibles para el Administrador)")
             st.dataframe(df_u[['id', 'nombre_completo', 'usuario', 'clave', 'turno', 'estado']], use_container_width=True)
             
             st.divider()
-            st.write("#### 🔑 Actualizar Contraseña de un Usuario")
+            st.write("#### 🔑 Cambiar Contraseña de un Usuario")
             with st.form("reset_pwd"):
                 c_u = st.selectbox("Selecciona el Usuario:", df_u['usuario'].tolist())
                 n_pwd = st.text_input("Escribe la Nueva Contraseña (Visible)")
                 if st.form_submit_button("Actualizar Contraseña", type="primary"):
                     if n_pwd:
+                        # Actualiza texto plano ('clave')
                         supabase.table("usuarios").update({"clave": n_pwd}).eq("usuario", c_u).execute()
                         st.success(f"✅ Contraseña actualizada correctamente para {c_u}.")
                         time.sleep(1); st.rerun()
@@ -535,8 +541,7 @@ elif menu == "👥 GESTIÓN DE USUARIOS" and "gestion_usuarios" in st.session_st
         with st.form("form_new_user", clear_on_submit=True):
             n_nombre = st.text_input("Nombre Completo")
             n_user = st.text_input("Nombre de Usuario (Para Login)")
-            # Guardamos la contraseña en formato visible
-            n_pass = st.text_input("Contraseña de Acceso")
+            n_pass = st.text_input("Contraseña de Acceso (Visible para Admin)")
             n_turno = st.selectbox("Turno de Trabajo", ["Mañana", "Tarde", "Completo", "Rotativo"])
             
             st.write("#### Asignación de Permisos Dinámicos")
@@ -549,14 +554,18 @@ elif menu == "👥 GESTIÓN DE USUARIOS" and "gestion_usuarios" in st.session_st
             if st.form_submit_button("Crear Usuario Seguro", type="primary"):
                 if n_nombre and n_user and n_pass:
                     try:
-                        # Se guarda 'clave' en lugar del hash para que el admin pueda verla
+                        # Pasamos n_perms DIRECTAMENTE como lista de Python para que Supabase lo entienda
                         supabase.table("usuarios").insert({
-                            "nombre_completo": n_nombre, "usuario": n_user, "clave": n_pass,
-                            "turno": n_turno, "permisos": json.dumps(n_perms)
+                            "nombre_completo": n_nombre, 
+                            "usuario": n_user, 
+                            "clave": n_pass, 
+                            "turno": n_turno, 
+                            "permisos": n_perms
                         }).execute()
                         st.success(f"✅ Usuario {n_user} creado con éxito.")
                         time.sleep(1.5); st.rerun()
-                    except: st.error("❌ El nombre de usuario ya existe o hubo un error de conexión.")
+                    except Exception as e: 
+                        st.error(f"❌ Error al crear usuario: {str(e)}")
                 else: st.warning("Rellena todos los campos básicos.")
         st.markdown('</div>', unsafe_allow_html=True)
 

@@ -302,7 +302,6 @@ if menu == "🛒 VENTAS":
                             supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": item['id'], "cantidad": item['cant'], "precio_unitario": item['precio'], "subtotal": item['precio'] * item['cant']}).execute()
                             stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", item['id']).execute()
                             supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - item['cant']}).eq("codigo_barras", item['id']).execute()
-                            
                             registrar_kardex(item['id'], vendedor_id, "SALIDA_VENTA", item['cant'], f"Ticket {t_num}")
                             items_html += f"{item['nombre'][:20]:<20} <br> {item['cant']:>2} x S/. {item['precio']:.2f} = S/. {item['precio']*item['cant']:.2f}<br><br>"
                         
@@ -552,12 +551,12 @@ elif menu == "🧾 TICKETS" and "reportes" in st.session_state.user_perms:
     except: pass
 
 # ==========================================
-# 👥 MÓDULO: GESTIÓN DE VENDEDORES
+# 👥 MÓDULO: GESTIÓN DE VENDEDORES (RRHH INTEGRAL)
 # ==========================================
 elif menu == "👥 VENDEDORES" and "gestion_usuarios" in st.session_state.user_perms:
     st.subheader("Panel de Control Gerencial")
     
-    t_u1, t_u2, t_u3, t_u4, t_u5 = st.tabs(["📋 Activos", "➕ Crear Nuevo", "🔑 Reset Password", "🗑️ Dar Baja / Alta", "📊 Análisis Financiero"])
+    t_u1, t_u2, t_u3, t_u4, t_u5 = st.tabs(["📋 Activos", "➕ Crear Nuevo", "🔑 Reset Password", "🗑️ Dar Baja / Alta", "📊 Análisis Integral (RRHH)"])
     
     usrs_db = supabase.table("usuarios").select("id, nombre_completo, usuario, clave, turno, permisos, estado").execute()
     df_u = pd.DataFrame()
@@ -619,56 +618,117 @@ elif menu == "👥 VENDEDORES" and "gestion_usuarios" in st.session_state.user_p
                     supabase.table("usuarios").update({"estado": "Activo"}).eq("usuario", user_to_react).execute()
                     st.success("✅ Reactivado."); time.sleep(1); st.rerun()
 
-    # --- NUEVO ANÁLISIS FINANCIERO POR VENDEDOR ---
+    # --- SÚPER DASHBOARD RRHH INTEGRAL ---
     with t_u5:
         if not df_activos.empty:
-            st.info("📊 Calcula la utilidad neta exacta que este vendedor le genera a tu negocio hoy y este mes.")
-            sel_u_nombre = st.selectbox("Selecciona un vendedor:", df_activos['nombre_completo'].tolist())
+            st.write("#### 🎯 Evaluación Integral del Personal (RRHH y Finanzas)")
+            sel_u_nombre = st.selectbox("Selecciona un vendedor para evaluar su rendimiento:", df_activos['nombre_completo'].tolist())
             sel_u_id = df_activos[df_activos['nombre_completo'] == sel_u_nombre]['id'].iloc[0]
+            
             try:
-                today_date = datetime.now().date()
-                curr_month = datetime.now().month
-                
-                # --- ASISTENCIA ---
+                # OBTENER TODOS LOS DATOS DEL VENDEDOR
                 ast_db = supabase.table("asistencia").select("*").eq("usuario_id", sel_u_id).execute()
-                df_a = pd.DataFrame(ast_db.data)
-                h_in, h_out, hrs_hoy = "--:--", "--:--", 0.0
-                if not df_a.empty:
-                    df_a['ts'] = pd.to_datetime(df_a['timestamp']).dt.tz_convert('America/Lima')
-                    df_a['date'] = df_a['ts'].dt.date
-                    df_hoy = df_a[df_a['date'] == today_date]
-                    if not df_hoy.empty:
-                        i_ts = df_hoy[df_hoy['tipo_marcacion'] == 'Ingreso']['ts']
-                        s_ts = df_hoy[df_hoy['tipo_marcacion'] == 'Salida']['ts']
-                        if not i_ts.empty: h_in = i_ts.min().strftime('%I:%M %p')
-                        if not s_ts.empty: h_out = s_ts.max().strftime('%I:%M %p')
-                        if not i_ts.empty and not s_ts.empty: hrs_hoy = (s_ts.max() - i_ts.min()).total_seconds() / 3600
-
-                # --- FINANZAS REALES (Ventas vs Costos) ---
-                v_det = supabase.table("ventas_detalle").select("subtotal, cantidad, productos(costo_compra), ventas_cabecera(created_at, usuario_id)").execute()
-                v_hoy_ventas, v_hoy_costo, v_hoy_utilidad = 0.0, 0.0, 0.0
+                v_det = supabase.table("ventas_detalle").select("subtotal, cantidad, productos(costo_compra), ventas_cabecera(created_at, ticket_numero, usuario_id)").execute()
+                
+                df_a = pd.DataFrame(ast_db.data) if ast_db.data else pd.DataFrame()
+                df_v = pd.DataFrame()
                 
                 if v_det.data:
                     df_v = pd.DataFrame(v_det.data)
                     df_v['ts'] = pd.to_datetime(df_v['ventas_cabecera'].apply(lambda x: x.get('created_at', '2000-01-01') if isinstance(x, dict) else '2000-01-01')).dt.tz_convert('America/Lima')
                     df_v['usr_id'] = df_v['ventas_cabecera'].apply(lambda x: x.get('usuario_id', 0) if isinstance(x, dict) else 0)
+                    df_v['ticket'] = df_v['ventas_cabecera'].apply(lambda x: x.get('ticket_numero', '') if isinstance(x, dict) else '')
                     df_v['costo_unit'] = df_v['productos'].apply(lambda x: float(x.get('costo_compra', 0)) if isinstance(x, dict) else 0.0)
                     df_v['costo_tot'] = df_v['costo_unit'] * df_v['cantidad']
-                    
-                    df_v_usr = df_v[df_v['usr_id'] == sel_u_id]
-                    df_hoy_v = df_v_usr[df_v_usr['ts'].dt.date == today_date]
-                    
+                    df_v = df_v[df_v['usr_id'] == sel_u_id]
+
+                if not df_a.empty:
+                    df_a['ts'] = pd.to_datetime(df_a['timestamp']).dt.tz_convert('America/Lima')
+                    df_a['date'] = df_a['ts'].dt.date
+                    df_a['month'] = df_a['ts'].dt.month
+
+                # --- SECCIÓN 1: ACUMULADO MENSUAL ---
+                st.markdown("---")
+                st.markdown("##### 📅 Resumen Acumulado (Mes Actual)")
+                curr_month = datetime.now().month
+                
+                dias_mes, hrs_mes, v_mes_ventas, v_mes_utilidad = 0, 0.0, 0.0, 0.0
+                
+                if not df_a.empty:
+                    df_mes_a = df_a[df_a['month'] == curr_month]
+                    dias_mes = df_mes_a['date'].nunique()
+                    for d, grp in df_mes_a.groupby('date'):
+                        i_ts = grp[grp['tipo_marcacion'] == 'Ingreso']['ts']
+                        s_ts = grp[grp['tipo_marcacion'] == 'Salida']['ts']
+                        if not i_ts.empty and not s_ts.empty: hrs_mes += (s_ts.max() - i_ts.min()).total_seconds() / 3600
+
+                if not df_v.empty:
+                    df_mes_v = df_v[df_v['ts'].dt.month == curr_month]
+                    v_mes_ventas = df_mes_v['subtotal'].sum()
+                    v_mes_utilidad = v_mes_ventas - df_mes_v['costo_tot'].sum()
+
+                c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+                c_m1.markdown(f"<div class='metric-box'><div class='metric-title'>Días Asistidos</div><div class='metric-value-small'>{dias_mes} Días</div></div>", unsafe_allow_html=True)
+                c_m2.markdown(f"<div class='metric-box'><div class='metric-title'>Horas Totales</div><div class='metric-value-small'>{hrs_mes:.1f} Hrs</div></div>", unsafe_allow_html=True)
+                c_m3.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas del Mes</div><div class='metric-value-small metric-green'>S/. {v_mes_ventas:.2f}</div></div>", unsafe_allow_html=True)
+                c_m4.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad del Mes</div><div class='metric-value-small metric-purple'>S/. {v_mes_utilidad:.2f}</div></div>", unsafe_allow_html=True)
+
+                # --- SECCIÓN 2: BÚSQUEDA POR DÍA ESPECÍFICO ---
+                st.markdown("---")
+                st.markdown("##### 📆 Buscar Rendimiento por Día Específico")
+                filtro_fecha = st.date_input("Selecciona un día para evaluar su rendimiento exacto:", value=datetime.now().date())
+                
+                h_in, h_out, hrs_hoy = "--:--", "--:--", 0.0
+                v_hoy_ventas, v_hoy_costo, v_hoy_utilidad = 0.0, 0.0, 0.0
+                df_tabla_asistencia = pd.DataFrame()
+                
+                # Calcular Asistencia del día seleccionado
+                if not df_a.empty:
+                    df_hoy_a = df_a[df_a['date'] == filtro_fecha]
+                    if not df_hoy_a.empty:
+                        df_tabla_asistencia = df_hoy_a[['tipo_marcacion', 'ts']].copy()
+                        df_tabla_asistencia['Hora Local'] = df_tabla_asistencia['ts'].dt.strftime('%I:%M %p')
+                        df_tabla_asistencia = df_tabla_asistencia[['tipo_marcacion', 'Hora Local']]
+                        
+                        i_ts = df_hoy_a[df_hoy_a['tipo_marcacion'] == 'Ingreso']['ts']
+                        s_ts = df_hoy_a[df_hoy_a['tipo_marcacion'] == 'Salida']['ts']
+                        if not i_ts.empty: h_in = i_ts.min().strftime('%I:%M %p')
+                        if not s_ts.empty: h_out = s_ts.max().strftime('%I:%M %p')
+                        if not i_ts.empty and not s_ts.empty: hrs_hoy = (s_ts.max() - i_ts.min()).total_seconds() / 3600
+
+                # Calcular Ventas del día seleccionado
+                if not df_v.empty:
+                    df_hoy_v = df_v[df_v['ts'].dt.date == filtro_fecha]
                     v_hoy_ventas = df_hoy_v['subtotal'].sum()
                     v_hoy_costo = df_hoy_v['costo_tot'].sum()
                     v_hoy_utilidad = v_hoy_ventas - v_hoy_costo
                 
-                st.markdown(f"**Métricas del Día (Hoy)**")
+                # Mostrar Tarjetas del día
                 c1, c2, c3, c4 = st.columns(4)
-                c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Brutas</div><div class='metric-value-small metric-green'>S/. {v_hoy_ventas:.2f}</div></div>", unsafe_allow_html=True)
-                c2.markdown(f"<div class='metric-box'><div class='metric-title'>Costo (Capital)</div><div class='metric-value-small metric-orange'>S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
-                c3.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
-                c4.markdown(f"<div class='metric-box'><div class='metric-title'>Horas Trabajo</div><div class='metric-value-small'>{hrs_hoy:.1f} Hrs</div></div>", unsafe_allow_html=True)
-            except Exception as e: pass
+                c1.markdown(f"<div class='metric-box'><div class='metric-title'>Hora Entrada</div><div class='metric-value-small'>{h_in}</div></div>", unsafe_allow_html=True)
+                c2.markdown(f"<div class='metric-box'><div class='metric-title'>Hora Salida</div><div class='metric-value-small'>{h_out}</div></div>", unsafe_allow_html=True)
+                c3.markdown(f"<div class='metric-box'><div class='metric-title'>Horas Trabajo</div><div class='metric-value-small'>{hrs_hoy:.1f} Hrs</div></div>", unsafe_allow_html=True)
+                c4.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>UTILIDAD NETA ({filtro_fecha.strftime('%d/%m')})</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
+                
+                # Mostrar Tablas de Detalle del Día
+                col_tab1, col_tab2 = st.columns(2)
+                with col_tab1:
+                    st.write("**Registro de Asistencia del Día:**")
+                    if not df_tabla_asistencia.empty:
+                        st.dataframe(df_tabla_asistencia, use_container_width=True)
+                    else: st.info("No marcó asistencia este día.")
+                
+                with col_tab2:
+                    st.write("**Desglose de Ventas del Día:**")
+                    if not df_v.empty and not df_hoy_v.empty:
+                        df_show_v = df_hoy_v.groupby('ticket').agg(
+                            Artículos=('cantidad', 'sum'),
+                            Total_Cobrado=('subtotal', 'sum')
+                        ).reset_index()
+                        st.dataframe(df_show_v, use_container_width=True)
+                    else: st.info("No realizó ventas este día.")
+
+            except Exception as e: st.error(f"Error procesando análisis: {e}")
 
 # ==========================================
 # 📊 MÓDULO 5: REPORTES Y CIERRE
@@ -680,7 +740,6 @@ elif menu == "📊 REPORTES" and ("cierre_caja" in st.session_state.user_perms o
         tk = st.session_state.ticket_cierre
         st.success("✅ Caja cerrada.")
         
-        # --- TICKET Z RESTAURADO COMPLETO ---
         st.markdown(f"""
         <div class="ticket-termico">
             <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (FIN TURNO)</b></center>

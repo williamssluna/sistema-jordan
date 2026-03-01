@@ -1,8 +1,5 @@
 streamlit
 supabase
 pandas
-zxing-cpp
-opencv-python-headless
-numpy
-Pillow
+bcrypt
 plotly

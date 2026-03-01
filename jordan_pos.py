@@ -31,7 +31,7 @@ def verify_password(input_password, stored_password):
     return input_password == stored_password
 
 # ==========================================
-# 3. DISEÑO VISUAL UX/UI (MODERNO Y COMPACTO)
+# 3. DISEÑO VISUAL UX/UI
 # ==========================================
 st.markdown("""
     <style>
@@ -47,7 +47,9 @@ st.markdown("""
     .metric-red { color: var(--danger-color); }
     .metric-orange { color: var(--warning-color); }
     .metric-blue { color: var(--primary-color); }
+    .metric-purple { color: #8b5cf6; }
     .qr-container { padding: 10px; border-radius: 10px; text-align: center; border: 2px dashed var(--primary-color); margin-bottom: 10px;}
+    .qr-amount { font-size: 32px; font-weight: 900; color: #1e3a8a; margin-bottom: 10px;}
     .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #333; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2; font-size: 13px; }
     .linea-corte { text-align: center; margin: 25px 0; border-bottom: 2px dashed #94a3b8; line-height: 0.1em; color: #64748b; font-size: 12px; font-weight: bold;}
     .linea-corte span { background: var(--background-color); padding: 0 10px; }
@@ -132,12 +134,35 @@ def get_qr_image_path():
     return None
 
 # ==========================================
-# 5. ESTRUCTURA PRINCIPAL Y SIDEBAR (NAVEGACIÓN)
+# 5. ESTRUCTURA PRINCIPAL Y SIDEBAR 
 # ==========================================
 st.markdown('<div class="main-header">📱 JORDAN POS | ERP CORPORATIVO</div>', unsafe_allow_html=True)
 
-st.sidebar.markdown("### 🏢 Accesos")
+st.sidebar.markdown("### 🏢 Control de Personal")
+
+# SIEMPRE VISIBLE: Registro de Asistencia
+with st.sidebar.expander("⌚ Marcar Asistencia", expanded=True):
+    with st.form("form_asistencia", clear_on_submit=True):
+        usr_ast = st.text_input("Usuario Vendedor")
+        pwd_ast = st.text_input("Clave", type="password")
+        c_a1, c_a2 = st.columns(2)
+        btn_in = c_a1.form_submit_button("🟢 Entrada")
+        btn_out = c_a2.form_submit_button("🔴 Salida")
+        if btn_in or btn_out:
+            if usr_ast and pwd_ast:
+                try:
+                    u_d = supabase.table("usuarios").select("*").eq("usuario", usr_ast).eq("estado", "Activo").execute()
+                    if u_d.data and verify_password(pwd_ast, u_d.data[0].get('clave')):
+                        tipo = "Ingreso" if btn_in else "Salida"
+                        supabase.table("asistencia").insert({"usuario_id": u_d.data[0]['id'], "tipo_marcacion": tipo}).execute()
+                        st.success(f"✅ Asistencia registrada para {u_d.data[0]['nombre_completo']}")
+                    else: st.error("❌ Credenciales inválidas.")
+                except: pass
+
+st.sidebar.divider()
+
 if not st.session_state.logged_in:
+    st.sidebar.markdown("#### 🔐 Acceso Administrativo")
     with st.sidebar.form("form_login"):
         l_usr = st.text_input("Usuario")
         l_pwd = st.text_input("Contraseña", type="password")
@@ -160,13 +185,14 @@ else:
         st.session_state.user_perms = []
         st.rerun()
 
-# --- MENÚ DINÁMICO ---
-menu_options = []
+# --- MENÚ DINÁMICO DE NAVEGACIÓN ---
+# Ventas y Devoluciones SIEMPRE son visibles para todos
+menu_options = ["🛒 VENTAS (POS)", "🔄 DEVOLUCIONES"]
+
+# Módulos protegidos (Solo aparecen si inicias sesión y tienes permiso)
 if st.session_state.logged_in:
     p = st.session_state.user_perms
-    if "reportes" in p or "cierre_caja" in p: menu_options.append("📈 DASHBOARD GENERAL")
-    menu_options.append("🛒 VENTAS (POS)")
-    menu_options.append("🔄 DEVOLUCIONES")
+    if "reportes" in p or "cierre_caja" in p: menu_options.insert(0, "📈 DASHBOARD GENERAL")
     menu_options.append("🤝 CLIENTES (CRM)")
     if "inventario_ver" in p: menu_options.append("📦 ALMACÉN Y COMPRAS")
     if "reportes" in p: menu_options.append("💵 GASTOS OPERATIVOS")
@@ -174,32 +200,10 @@ if st.session_state.logged_in:
     if "reportes" in p or "cierre_caja" in p: menu_options.append("📊 REPORTES Y CIERRE")
     if "gestion_usuarios" in p: menu_options.append("👥 RRHH (Vendedores)")
 
-menu = st.sidebar.radio("Navegación", menu_options) if st.session_state.logged_in else None
-
-# Solo marcación si no hay sesión iniciada como admin
-if not st.session_state.logged_in:
-    with st.sidebar.expander("⌚ Marcar Asistencia", expanded=True):
-        with st.form("form_asistencia", clear_on_submit=True):
-            usr_ast = st.text_input("Usuario Vendedor")
-            pwd_ast = st.text_input("Clave", type="password")
-            c_a1, c_a2 = st.columns(2)
-            if c_a1.form_submit_button("🟢 Entrada") or c_a2.form_submit_button("🔴 Salida"):
-                if usr_ast and pwd_ast:
-                    try:
-                        u_d = supabase.table("usuarios").select("*").eq("usuario", usr_ast).eq("estado", "Activo").execute()
-                        if u_d.data and verify_password(pwd_ast, u_d.data[0].get('clave')):
-                            tipo = "Ingreso" if "Entrada" in str(st.session_state) else "Salida" # Detect button via session is tricky, simplified
-                            supabase.table("asistencia").insert({"usuario_id": u_d.data[0]['id'], "tipo_marcacion": tipo}).execute()
-                            st.success(f"✅ Asistencia registrada.")
-                        else: st.error("❌ Credenciales inválidas.")
-                    except: pass
-
-if not st.session_state.logged_in:
-    st.info("Por favor, inicia sesión para acceder al sistema.")
-    st.stop()
+menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL
+# 📈 MÓDULO 0: DASHBOARD GENERAL (Solo Admin)
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
     st.subheader("Panorama del Negocio")
@@ -227,7 +231,7 @@ if menu == "📈 DASHBOARD GENERAL":
     except: pass
 
 # ==========================================
-# 🛒 MÓDULO 1: VENTAS (POS MEJORADO)
+# 🛒 MÓDULO 1: VENTAS (POS) - ACCESO LIBRE
 # ==========================================
 elif menu == "🛒 VENTAS (POS)":
     if st.session_state.last_ticket_html:
@@ -288,10 +292,17 @@ elif menu == "🛒 VENTAS (POS)":
 
             st.markdown(f"<div style='text-align:right;'><h1 style='color:#10b981; font-size:45px;'>TOTAL: S/. {total_venta:.2f}</h1></div>", unsafe_allow_html=True)
             
-            if "reportes" in st.session_state.user_perms:
+            # Solo muestra ganancia si está logueado y tiene permisos
+            if st.session_state.logged_in and "reportes" in st.session_state.user_perms:
                 st.caption(f"Margen ganancia estimado: S/. {total_venta - costo_total:.2f}")
 
             with st.expander("💸 PAGO Y FACTURACIÓN", expanded=True):
+                # Vendedor (Obligatorio)
+                lista_vendedores = get_lista_usuarios()
+                vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
+                vendedor_seleccionado = st.selectbox("👤 Tu usuario (Vendedor):", ["Seleccionar..."] + list(vendedor_opciones.keys()))
+
+                # Cliente (Opcional)
                 try:
                     clientes_db = supabase.table("clientes").select("*").execute()
                     opciones_clientes = ["Público General (Sin registrar)"]
@@ -320,16 +331,19 @@ elif menu == "🛒 VENTAS (POS)":
 
                 st.markdown('<div class="btn-checkout">', unsafe_allow_html=True)
                 if st.button("FINALIZAR VENTA E IMPRIMIR", use_container_width=True):
-                    if pago != "Efectivo" and not ref_pago:
-                        st.error("Ingresa la referencia del pago digital.")
+                    if vendedor_seleccionado == "Seleccionar...":
+                        st.error("🛑 Selecciona tu usuario (Vendedor) primero.")
+                    elif pago != "Efectivo" and not ref_pago:
+                        st.error("🛑 Ingresa la referencia del pago digital.")
                     else:
                         try:
+                            vendedor_id = vendedor_opciones[vendedor_seleccionado]
                             cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             t_num = f"AJ-{int(time.time())}"
                             
                             supabase.table("ventas_cabecera").insert({
                                 "ticket_numero": t_num, "total_venta": total_venta, "metodo_pago": pago,
-                                "usuario_id": st.session_state.user_id, "referencia_pago": ref_pago,
+                                "usuario_id": vendedor_id, "referencia_pago": ref_pago,
                                 "cliente_id": cli_id
                             }).execute()
                             v_res = supabase.table("ventas_cabecera").select("id").eq("ticket_numero", t_num).execute()
@@ -340,22 +354,23 @@ elif menu == "🛒 VENTAS (POS)":
                                 supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": it['id'], "cantidad": it['cant'], "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']}).execute()
                                 stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
                                 supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
-                                registrar_kardex(it['id'], st.session_state.user_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
+                                
+                                registrar_kardex(it['id'], vendedor_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
                                 items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
                             
                             fecha_tk = datetime.now().strftime('%d/%m/%Y %H:%M')
-                            c_base = f"""--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {st.session_state.user_name}<br>CLIENTE: {cliente_sel.split(' - ')[0] if cli_id else 'General'}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"""
+                            c_base = f"""--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {vendedor_seleccionado}<br>CLIENTE: {cliente_sel.split(' - ')[0] if cli_id else 'General'}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"""
                             tk_html = f"""<div class="ticket-termico"><center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>{c_base}<center>¡Gracias!</center></div><div class="linea-corte"><span>✂️</span></div><div class="ticket-termico"><center><b>ACCESORIOS JORDAN</b><br>CONTROL</center><br>{c_base}</div><script>window.onload=function(){{window.print();}}</script>"""
                             
-                            supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": st.session_state.user_id, "html_payload": tk_html}).execute()
+                            supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": tk_html}).execute()
                             st.session_state.last_ticket_html = tk_html
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"Error al facturar: {e}")
+                        except Exception as e: st.error(f"Error al facturar.")
                 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 🔄 MÓDULO 2: DEVOLUCIONES
+# 🔄 MÓDULO 2: DEVOLUCIONES - ACCESO LIBRE
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones")
@@ -370,7 +385,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 if v_cab.data:
                     st.success(f"✅ Ticket: Pago: {v_cab.data[0]['metodo_pago']}")
                     v_det = supabase.table("ventas_detalle").select("*, productos(nombre)").eq("venta_id", v_cab.data[0]['id']).execute()
-                    vendedor_sel = st.selectbox("👤 Autoriza:", ["..."] + list(vendedor_opciones.keys()))
+                    vendedor_sel = st.selectbox("👤 Autoriza (Vendedor):", ["..."] + list(vendedor_opciones.keys()))
                     for d in v_det.data:
                         col_d1, col_d2 = st.columns([3, 1])
                         col_d1.write(f"**{d['productos']['nombre']}** - Compró: {d['cantidad']} ud.")
@@ -382,7 +397,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 supabase.table("devoluciones").insert({"usuario_id": usr_id, "producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
                                 registrar_kardex(d['producto_id'], usr_id, "INGRESO_DEVOLUCION", d['cantidad'], f"Ticket {search_dev.upper()}")
                                 st.success("✅ Devuelto."); time.sleep(1); st.rerun()
-                            else: st.error("Selecciona usuario.")
+                            else: st.error("Selecciona tu usuario.")
             except: pass
         else:
             try:
@@ -390,7 +405,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 if p_db.data:
                     p = p_db.data[0]
                     with st.form("form_dev_libre"):
-                        vendedor_sel = st.selectbox("👤 Autoriza:", ["..."] + list(vendedor_opciones.keys()))
+                        vendedor_sel = st.selectbox("👤 Autoriza (Vendedor):", ["..."] + list(vendedor_opciones.keys()))
                         c1, c2 = st.columns(2)
                         d_cant = c1.number_input("Cantidad", min_value=1, step=1)
                         d_dinero = c2.number_input("Devuelto (S/.)", value=float(p['precio_lista']))

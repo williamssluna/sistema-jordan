@@ -17,8 +17,6 @@ supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
 
 st.set_page_config(page_title="JORDAN POS ERP", layout="wide", page_icon="📱", initial_sidebar_state="expanded")
 
-ERROR_ADMIN = "🚨 Error del sistema. Contactar al administrador."
-
 # ==========================================
 # 2. SEGURIDAD Y ENCRIPTACIÓN (BCRYPT)
 # ==========================================
@@ -59,7 +57,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# INYECCIÓN JS PARA AUTOFOCUS EN VENTAS
 components.html("""
     <script>
     const inputs = window.parent.document.querySelectorAll('input[type="text"]');
@@ -119,7 +116,7 @@ def procesar_codigo_venta(code):
                 return True
             else: st.error("❌ Sin stock disponible.")
         else: st.warning("⚠️ Producto no encontrado.")
-    except: st.error(ERROR_ADMIN)
+    except: st.error("Error de conexión con la base de datos.")
     return False
 
 def get_lista_usuarios():
@@ -140,7 +137,6 @@ st.markdown('<div class="main-header">📱 JORDAN POS | ERP CORPORATIVO</div>', 
 
 st.sidebar.markdown("### 🏢 Control de Personal")
 
-# SIEMPRE VISIBLE: Registro de Asistencia
 with st.sidebar.expander("⌚ Marcar Asistencia", expanded=True):
     with st.form("form_asistencia", clear_on_submit=True):
         usr_ast = st.text_input("Usuario Vendedor")
@@ -185,11 +181,9 @@ else:
         st.session_state.user_perms = []
         st.rerun()
 
-# --- MENÚ DINÁMICO DE NAVEGACIÓN ---
-# Ventas y Devoluciones SIEMPRE son visibles para todos
+# --- MENÚ DINÁMICO ---
 menu_options = ["🛒 VENTAS (POS)", "🔄 DEVOLUCIONES"]
 
-# Módulos protegidos (Solo aparecen si inicias sesión y tienes permiso)
 if st.session_state.logged_in:
     p = st.session_state.user_perms
     if "reportes" in p or "cierre_caja" in p: menu_options.insert(0, "📈 DASHBOARD GENERAL")
@@ -203,7 +197,7 @@ if st.session_state.logged_in:
 menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL (Solo Admin)
+# 📈 MÓDULO 0: DASHBOARD GENERAL
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
     st.subheader("Panorama del Negocio")
@@ -231,7 +225,7 @@ if menu == "📈 DASHBOARD GENERAL":
     except: pass
 
 # ==========================================
-# 🛒 MÓDULO 1: VENTAS (POS) - ACCESO LIBRE
+# 🛒 MÓDULO 1: VENTAS (POS) 
 # ==========================================
 elif menu == "🛒 VENTAS (POS)":
     if st.session_state.last_ticket_html:
@@ -292,17 +286,14 @@ elif menu == "🛒 VENTAS (POS)":
 
             st.markdown(f"<div style='text-align:right;'><h1 style='color:#10b981; font-size:45px;'>TOTAL: S/. {total_venta:.2f}</h1></div>", unsafe_allow_html=True)
             
-            # Solo muestra ganancia si está logueado y tiene permisos
             if st.session_state.logged_in and "reportes" in st.session_state.user_perms:
                 st.caption(f"Margen ganancia estimado: S/. {total_venta - costo_total:.2f}")
 
             with st.expander("💸 PAGO Y FACTURACIÓN", expanded=True):
-                # Vendedor (Obligatorio)
                 lista_vendedores = get_lista_usuarios()
                 vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
                 vendedor_seleccionado = st.selectbox("👤 Tu usuario (Vendedor):", ["Seleccionar..."] + list(vendedor_opciones.keys()))
 
-                # Cliente (Opcional)
                 try:
                     clientes_db = supabase.table("clientes").select("*").execute()
                     opciones_clientes = ["Público General (Sin registrar)"]
@@ -330,6 +321,8 @@ elif menu == "🛒 VENTAS (POS)":
                     ref_pago = cp2.text_input("N° de Referencia")
 
                 st.markdown('<div class="btn-checkout">', unsafe_allow_html=True)
+                
+                # ====== MOTOR DE FACTURACIÓN BLINDADO ======
                 if st.button("FINALIZAR VENTA E IMPRIMIR", use_container_width=True):
                     if vendedor_seleccionado == "Seleccionar...":
                         st.error("🛑 Selecciona tu usuario (Vendedor) primero.")
@@ -338,39 +331,70 @@ elif menu == "🛒 VENTAS (POS)":
                     else:
                         try:
                             vendedor_id = vendedor_opciones[vendedor_seleccionado]
-                            cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             t_num = f"AJ-{int(time.time())}"
                             
-                            supabase.table("ventas_cabecera").insert({
-                                "ticket_numero": t_num, "total_venta": total_venta, "metodo_pago": pago,
-                                "usuario_id": vendedor_id, "referencia_pago": ref_pago,
-                                "cliente_id": cli_id
-                            }).execute()
+                            # 1. Preparar datos base (Seguros)
+                            datos_insert = {
+                                "ticket_numero": t_num, 
+                                "total_venta": total_venta, 
+                                "metodo_pago": pago, 
+                                "tipo_comprobante": "Ticket", # <-- CAMPO RESTAURADO PARA EVITAR ERROR
+                                "usuario_id": vendedor_id, 
+                                "referencia_pago": ref_pago
+                            }
+                            
+                            # 2. Añadir cliente SOLO si existe en el diccionario
+                            cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
+                            if cli_id is not None:
+                                datos_insert["cliente_id"] = cli_id
+                            
+                            # 3. Intentar guardar cabecera (Con escudo anti-fallas de SQL)
+                            try:
+                                supabase.table("ventas_cabecera").insert(datos_insert).execute()
+                            except Exception as db_err:
+                                # Si la tabla ventas_cabecera aún no tiene la columna cliente_id, la ignoramos y guardamos la venta
+                                if "cliente_id" in str(db_err) and "cliente_id" in datos_insert:
+                                    del datos_insert["cliente_id"]
+                                    supabase.table("ventas_cabecera").insert(datos_insert).execute()
+                                else:
+                                    raise db_err
+
+                            # 4. Obtener ID de la venta recién creada
                             v_res = supabase.table("ventas_cabecera").select("id").eq("ticket_numero", t_num).execute()
                             v_id = v_res.data[0]['id']
                             
+                            # 5. Guardar detalles, descontar stock y kardex
                             items_html = ""
                             for it in st.session_state.carrito:
-                                supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": it['id'], "cantidad": it['cant'], "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']}).execute()
+                                supabase.table("ventas_detalle").insert({
+                                    "venta_id": v_id, "producto_id": it['id'], "cantidad": it['cant'], 
+                                    "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']
+                                }).execute()
+                                
                                 stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
-                                supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
+                                nuevo_stock = stk.data[0]['stock_actual'] - it['cant']
+                                supabase.table("productos").update({"stock_actual": nuevo_stock}).eq("codigo_barras", it['id']).execute()
                                 
                                 registrar_kardex(it['id'], vendedor_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
                                 items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
                             
+                            # 6. Generar Ticket HTML (En una sola línea para evitar fallos visuales)
                             fecha_tk = datetime.now().strftime('%d/%m/%Y %H:%M')
-                            c_base = f"""--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {vendedor_seleccionado}<br>CLIENTE: {cliente_sel.split(' - ')[0] if cli_id else 'General'}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"""
-                            tk_html = f"""<div class="ticket-termico"><center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>{c_base}<center>¡Gracias!</center></div><div class="linea-corte"><span>✂️</span></div><div class="ticket-termico"><center><b>ACCESORIOS JORDAN</b><br>CONTROL</center><br>{c_base}</div><script>window.onload=function(){{window.print();}}</script>"""
+                            nom_cliente = cliente_sel.split(' - ')[0] if cli_id else 'General'
+                            c_base = f"--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {vendedor_seleccionado}<br>CLIENTE: {nom_cliente}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"
+                            
+                            tk_html = f"<div class='ticket-termico'><center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>{c_base}<center>¡Gracias por su compra!</center></div><div class='linea-corte'><span>✂️</span></div><div class='ticket-termico'><center><b>ACCESORIOS JORDAN</b><br>CONTROL INTERNO</center><br>{c_base}</div><script>window.onload=function(){{window.print();}}</script>"
                             
                             supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": tk_html}).execute()
                             st.session_state.last_ticket_html = tk_html
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"Error al facturar.")
+                        except Exception as e: 
+                            st.error(f"🚨 Error crítico al facturar: {str(e)}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 🔄 MÓDULO 2: DEVOLUCIONES - ACCESO LIBRE
+# 🔄 MÓDULO 2: DEVOLUCIONES
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.subheader("Gestión de Devoluciones")
@@ -396,7 +420,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
                                 supabase.table("devoluciones").insert({"usuario_id": usr_id, "producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
                                 registrar_kardex(d['producto_id'], usr_id, "INGRESO_DEVOLUCION", d['cantidad'], f"Ticket {search_dev.upper()}")
-                                st.success("✅ Devuelto."); time.sleep(1); st.rerun()
+                                st.session_state.iny_dev_cod = ""; st.success("✅ Devuelto."); time.sleep(1); st.rerun()
                             else: st.error("Selecciona tu usuario.")
             except: pass
         else:
@@ -589,7 +613,7 @@ elif menu == "⚠️ MERMAS" and "mermas" in st.session_state.user_perms:
         except: pass
 
 # ==========================================
-# 👥 MÓDULO 7: GESTIÓN DE VENDEDORES (RRHH INTEGRAL)
+# 👥 MÓDULO 7: GESTIÓN DE VENDEDORES (RRHH)
 # ==========================================
 elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state.user_perms:
     st.subheader("Panel de Control Gerencial")
@@ -775,7 +799,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                     if st.form_submit_button("🔒 APROBAR CIERRE", type="primary"):
                         supabase.table("cierres_caja").insert({"total_ventas": tot_v, "utilidad": utilidad}).execute()
                         
-                        # ALERTA DE STOCK <= 20
                         bajos = supabase.table("productos").select("nombre, stock_actual").lte("stock_actual", 20).execute()
                         alert_html = ""
                         if bajos.data:

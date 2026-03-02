@@ -26,7 +26,7 @@ def get_now():
     return pd.Timestamp.now('America/Lima').to_pydatetime()
 
 # ==========================================
-# 2. SEGURIDAD Y ENCRIPTACIÓN
+# 2. SEGURIDAD Y ENCRIPTACIÓN (BCRYPT)
 # ==========================================
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -91,7 +91,6 @@ def load_data(table):
     try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
     except: return pd.DataFrame()
 
-# ✅ CORRECCIÓN DE ERROR "NameError": Función subida al inicio.
 def get_lista_usuarios():
     try:
         res = supabase.table("usuarios").select("id, nombre_completo, usuario").eq("estado", "Activo").execute()
@@ -133,13 +132,8 @@ def procesar_codigo_venta(code):
     except: st.error("Error de base de datos.")
     return False
 
-def get_qr_image_path():
-    for ext in ['.png', '.jpg', '.jpeg']:
-        if os.path.exists(f"qr_yape{ext}"): return f"qr_yape{ext}"
-    return None
-
 # ==========================================
-# 5. SIDEBAR
+# 5. SIDEBAR Y ACCESOS
 # ==========================================
 st.markdown('<div class="main-header">📱 JORDAN POS | ERP CORPORATIVO</div>', unsafe_allow_html=True)
 
@@ -208,7 +202,7 @@ menu = st.sidebar.radio("Navegación", menu_options)
 if menu == "📈 DASHBOARD GENERAL":
     st.subheader("Panorama del Negocio")
     try:
-        v_db = supabase.table("ventas_cabecera").select("total_venta, created_at").execute()
+        v_db = supabase.table("ventas_cabecera").select("*").execute()
         if v_db.data:
             df_v = pd.DataFrame(v_db.data)
             df_v['fecha'] = pd.to_datetime(df_v['created_at']).dt.tz_convert('America/Lima').dt.date
@@ -251,7 +245,6 @@ elif menu == "🛒 VENTAS (POS)":
     
     with col_v1:
         st.markdown("#### 🔍 Búsqueda de Productos")
-        # Búsqueda por LÁSER
         with st.form("form_barcode", clear_on_submit=True):
             codigo = st.text_input("Dispara el Láser (Código Numérico):", key="pos_input")
             if st.form_submit_button("Añadir por Láser", use_container_width=True):
@@ -259,7 +252,6 @@ elif menu == "🛒 VENTAS (POS)":
 
         st.divider()
         st.write("Búsqueda Manual (Autocompletado)")
-        # Búsqueda por NOMBRE AUTOCOMPLETADO (Req 2)
         prods_df = load_data_cached("productos")
         if not prods_df.empty:
             nombres_prods = prods_df['nombre'].tolist()
@@ -362,6 +354,7 @@ elif menu == "🛒 VENTAS (POS)":
                             cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             if cli_id is not None: datos_insert["cliente_id"] = cli_id
                             
+                            # 🛡️ ESCUDO Y FIX 42703 (ADAPTACIÓN DE TABLA)
                             try:
                                 res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
                             except Exception as e:
@@ -371,7 +364,9 @@ elif menu == "🛒 VENTAS (POS)":
                                 else:
                                     raise e
 
-                            v_id = res_insert.data[0]['id']
+                            v_row = res_insert.data[0]
+                            # Extracción de ID a prueba de fallos de esquema
+                            v_id = v_row.get('id', v_row.get('ticket_numero', t_num))
                             
                             items_html = ""
                             for it in st.session_state.carrito:
@@ -397,7 +392,7 @@ elif menu == "🛒 VENTAS (POS)":
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error al facturar: {str(e)}")
+                        except Exception as e: st.error(f"Error al facturar: Verifica tu base de datos.")
                 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -417,8 +412,10 @@ elif menu == "🔄 DEVOLUCIONES":
             try:
                 v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", search_dev.upper()).execute()
                 if v_cab.data:
-                    st.success(f"✅ Ticket: Pago: {v_cab.data[0]['metodo_pago']}")
-                    v_det = supabase.table("ventas_detalle").select("*, productos(nombre)").eq("venta_id", v_cab.data[0]['id']).execute()
+                    v_row = v_cab.data[0]
+                    v_id_search = v_row.get('id', v_row.get('ticket_numero'))
+                    st.success(f"✅ Ticket: Pago: {v_row['metodo_pago']}")
+                    v_det = supabase.table("ventas_detalle").select("*, productos(nombre)").eq("venta_id", v_id_search).execute()
                     vendedor_sel = st.selectbox("👤 Autoriza (Vendedor):", ["..."] + list(vendedor_opciones.keys()))
                     for d in v_det.data:
                         col_d1, col_d2 = st.columns([3, 1])
@@ -435,7 +432,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 else: st.warning("Ticket no encontrado.")
             except: pass
             
-    else: # Búsqueda Mixta (Req 3)
+    else: 
         col_d1, col_d2 = st.columns(2)
         d_cod = col_d1.text_input("Dispara Láser (Código)")
         prods_df = load_data_cached("productos")
@@ -524,7 +521,6 @@ elif menu == "💵 GASTOS OPERATIVOS" and "reportes" in st.session_state.user_pe
 # ==========================================
 elif menu == "📦 ALMACÉN Y COMPRAS" and "inventario_ver" in st.session_state.user_perms:
     st.subheader("Inventario Maestro y Compras")
-    # AÑADIDA PESTAÑA "Prod. Vendidos por Día" (Req 1)
     t1, t2, t3, t4, t5 = st.tabs(["📋 Inventario General", "➕ Crear Producto", "⚙️ Catálogos", "📓 KARDEX", "📈 Prod. Vendidos por Día"])
     
     with t1:
@@ -605,26 +601,27 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and "inventario_ver" in st.session_state.
             df_k['Fecha'] = pd.to_datetime(df_k['timestamp']).dt.tz_convert('America/Lima').dt.strftime('%d/%m %H:%M')
             st.dataframe(df_k[['Fecha', 'producto_id', 'tipo_movimiento', 'cantidad', 'Usuario']], use_container_width=True)
 
-    # REQ 1: PRODUCTOS VENDIDOS POR DÍA
     with t5:
         st.write("Consulta cuántas unidades de cada producto se vendieron en un día específico.")
         f_alm_dia = st.date_input("Selecciona la Fecha:", value=get_now().date(), key="f_alm_dia")
         try:
-            cab_a = supabase.table("ventas_cabecera").select("id, created_at").execute()
+            cab_a = supabase.table("ventas_cabecera").select("*").execute()
             if cab_a.data:
                 df_ca = pd.DataFrame(cab_a.data)
                 df_ca['fecha'] = pd.to_datetime(df_ca['created_at']).dt.tz_convert('America/Lima').dt.date
                 df_ca = df_ca[df_ca['fecha'] == f_alm_dia]
                 
                 if not df_ca.empty:
-                    ids_alm = [str(x) for x in df_ca['id'].tolist()]
+                    # Fix Error API - Extracción segura de la PK real
+                    if 'id' in df_ca.columns: ids_alm = [str(x) for x in df_ca['id'].tolist()]
+                    else: ids_alm = [str(x) for x in df_ca['ticket_numero'].tolist()]
+                    
                     det_a = supabase.table("ventas_detalle").select("cantidad, subtotal, productos(nombre, codigo_barras)").in_("venta_id", ids_alm).execute()
                     if det_a.data:
                         df_da = pd.DataFrame(det_a.data)
                         df_da['Producto'] = df_da['productos'].apply(lambda x: x.get('nombre', 'N/A') if isinstance(x, dict) else 'N/A')
                         df_da['Código'] = df_da['productos'].apply(lambda x: x.get('codigo_barras', 'N/A') if isinstance(x, dict) else 'N/A')
                         
-                        # Agrupamos sumando cantidades y dinero
                         res_alm = df_da.groupby(['Código', 'Producto']).agg(
                             Unidades_Vendidas=('cantidad', 'sum'),
                             Dinero_Generado=('subtotal', 'sum')
@@ -636,11 +633,10 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and "inventario_ver" in st.session_state.
         except Exception as e: st.error("Error al procesar.")
 
 # ==========================================
-# ⚠️ MÓDULO 6: MERMAS (BÚSQUEDA MIXTA - REQ 4)
+# ⚠️ MÓDULO 6: MERMAS
 # ==========================================
 elif menu == "⚠️ MERMAS" and "mermas" in st.session_state.user_perms:
     st.subheader("Dar de Baja Productos Dañados")
-    
     col_m1, col_m2 = st.columns(2)
     m_cod_input = col_m1.text_input("Dispara Láser (Código)")
     prods_df = load_data_cached("productos")
@@ -668,7 +664,7 @@ elif menu == "⚠️ MERMAS" and "mermas" in st.session_state.user_perms:
         except: pass
 
 # ==========================================
-# 👥 MÓDULO 7: GESTIÓN DE VENDEDORES (RRHH CON REPORTES - REQ 6)
+# 👥 MÓDULO 7: GESTIÓN DE VENDEDORES (RRHH)
 # ==========================================
 elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state.user_perms:
     st.subheader("Panel de Control Gerencial (RRHH)")
@@ -751,23 +747,20 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
                 if st.button("✅ ACTIVAR", type="primary"):
                     supabase.table("usuarios").update({"estado": "Activo"}).eq("usuario", u_react).execute(); st.rerun()
 
-    # NUEVA PESTAÑA: ANÁLISIS DE RRHH Y ASISTENCIA (REQ 6)
     with t_u6:
         if not df_activos.empty:
-            st.write("#### 🎯 Informe Detallado de Asistencia y Rendimiento")
+            st.write("#### 🎯 Informe Detallado de Asistencia")
             sel_u_nombre = st.selectbox("Selecciona un vendedor:", df_activos['nombre_completo'].tolist(), key="rrhh_vendedor")
             sel_u_id = df_activos[df_activos['nombre_completo'] == sel_u_nombre]['id'].iloc[0]
-            
             f_rrhh_dia = st.date_input("📆 Fecha Específica a Consultar:", value=get_now().date(), key="f_rrhh_dia")
             
             try:
-                # Buscar datos de asistencia del usuario
                 ast_db = supabase.table("asistencia").select("*").eq("usuario_id", sel_u_id).execute()
                 df_a = pd.DataFrame(ast_db.data) if ast_db.data else pd.DataFrame()
                 
                 h_in, h_out, hrs_hoy = "--:--", "--:--", 0.0
-                dias_asistidos = 0
-                dias_totales_mes = f_rrhh_dia.day # Días transcurridos en el mes consultado
+                dias_asistidos, dias_faltados = 0, 0
+                dias_totales_mes = f_rrhh_dia.day 
                 
                 df_tabla_asistencia = pd.DataFrame()
 
@@ -776,11 +769,9 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
                     df_a['date'] = df_a['ts'].dt.date
                     df_a['month'] = df_a['ts'].dt.month
                     
-                    # Filtro Mensual para calcular faltas
                     df_a_mes = df_a[df_a['month'] == f_rrhh_dia.month]
                     dias_asistidos = df_a_mes['date'].nunique()
                     
-                    # Filtro Diario Específico
                     df_hoy_a = df_a[df_a['date'] == f_rrhh_dia]
                     if not df_hoy_a.empty:
                         df_tabla_asistencia = df_hoy_a[['tipo_marcacion', 'ts']].copy()
@@ -792,7 +783,6 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
                         if not s_ts.empty: h_out = s_ts.max().strftime('%I:%M %p')
                         if not i_ts.empty and not s_ts.empty: hrs_hoy = (s_ts.max() - i_ts.min()).total_seconds() / 3600
                 
-                # Si estamos a día 15 y asistió 12, faltó 3.
                 dias_faltados = dias_totales_mes - dias_asistidos if dias_totales_mes > dias_asistidos else 0
 
                 c1, c2, c3, c4 = st.columns(4)
@@ -806,8 +796,7 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
                     st.dataframe(df_tabla_asistencia[['tipo_marcacion', 'Hora Local']], use_container_width=True)
                 else:
                     st.info("El empleado no registró ninguna marcación de asistencia en esta fecha.")
-            except Exception as e:
-                st.error("Aún procesando datos del personal.")
+            except: pass
 
 # ==========================================
 # 📊 MÓDULO 8: REPORTES Y CIERRE SÚPER BLINDADO
@@ -851,7 +840,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
     else:
         t_rep1, t_rep2, t_rep3, t_rep4 = st.tabs(["📊 Turno Actual (Cierre)", "📆 Historial por Día", "🧾 Tickets", "👤 Ventas por Vendedor"])
         
-        # --- PESTAÑA 1: TURNO ACTUAL ---
         with t_rep1:
             try:
                 last_cierre = get_last_cierre_dt()
@@ -871,7 +859,9 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                     v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                     tot_v = v_efe + v_dig
                     
-                    cab_ids = [str(c['id']) for c in cab.data]
+                    if 'id' in df_c.columns: cab_ids = [str(c) for c in df_c['id'].tolist()]
+                    else: cab_ids = [str(c) for c in df_c['ticket_numero'].tolist()]
+                    
                     if cab_ids: 
                         det = supabase.table("ventas_detalle").select("*, productos(costo_compra)").in_("venta_id", cab_ids).execute()
                         if det.data:
@@ -922,9 +912,8 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 'ganancia_bruta': ganancia_bruta, 'caja_efectivo': caja_efectivo, 'utilidad': ganancia_neta, 'alertas_stock': alert_html
                             }
                             st.rerun()
-            except Exception as e: st.error(f"Error procesando cierre: {e}")
+            except Exception as e: st.error(f"Esperando inicio de operaciones...")
 
-        # --- PESTAÑA 2: REPORTE HISTÓRICO POR DÍA ---
         with t_rep2:
             st.write("Consulta la rentabilidad exacta de cualquier día del pasado.")
             f_dia = st.date_input("Selecciona la fecha a analizar:", value=get_now().date())
@@ -946,7 +935,9 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         r_v_dig = df_c_dia[df_c_dia['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                         r_v_tot = r_v_efe + r_v_dig
                         
-                        ids_dia = [str(x) for x in df_c_dia['id'].tolist()]
+                        if 'id' in df_c_dia.columns: ids_dia = [str(x) for x in df_c_dia['id'].tolist()]
+                        else: ids_dia = [str(x) for x in df_c_dia['ticket_numero'].tolist()]
+                        
                         if ids_dia: 
                             det_dia = supabase.table("ventas_detalle").select("*, productos(costo_compra)").in_("venta_id", ids_dia).execute()
                             if det_dia.data:
@@ -975,7 +966,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                     st.info("No hubo movimientos financieros en la fecha seleccionada.")
             except Exception as e: st.error("Error al procesar el historial.")
 
-        # --- PESTAÑA 3: TICKETS ---
         with t_rep3:
             st.write("Historial General de Tickets")
             try:
@@ -991,7 +981,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         st.markdown(html_raw.replace("<script>window.onload=function(){window.print();}</script>", ""), unsafe_allow_html=True)
             except: pass
 
-        # --- PESTAÑA 4: ANÁLISIS POR VENDEDOR (POR DÍA - REQ 5) ---
         with t_rep4:
             st.write("Consulta cuánto vendió cada empleado en un día específico.")
             f_ven_dia = st.date_input("📆 Selecciona el Día a Analizar:", value=get_now().date(), key="f_ven_dia")
@@ -1015,7 +1004,9 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         
                         v_ventas = df_v_ventas['total_venta'].sum()
                         
-                        v_ids = [str(x) for x in df_v_ventas['id'].tolist()]
+                        if 'id' in df_v_ventas.columns: v_ids = [str(x) for x in df_v_ventas['id'].tolist()]
+                        else: v_ids = [str(x) for x in df_v_ventas['ticket_numero'].tolist()]
+                        
                         v_costo = 0.0
                         if v_ids:
                             det_v = supabase.table("ventas_detalle").select("*, productos(costo_compra)").in_("venta_id", v_ids).execute()

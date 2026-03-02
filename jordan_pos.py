@@ -110,16 +110,21 @@ def calcular_costo_y_cantidad_ventas(cab_data):
     try:
         df_cab = pd.DataFrame(cab_data)
         
-        # Descargamos detalles recientes (Evitamos el cruce de tablas en SQL que causaba error)
+        valid_ids = []
+        if 'id' in df_cab.columns:
+            valid_ids.extend(df_cab['id'].astype(str).tolist())
+        if 'ticket_numero' in df_cab.columns:
+            valid_ids.extend(df_cab['ticket_numero'].astype(str).tolist())
+            
+        if not valid_ids: return 0.0, 0
+
         det_res = supabase.table("ventas_detalle").select("*").order("id", desc=True).limit(8000).execute()
         if not det_res.data: return 0.0, 0
+        
         df_det = pd.DataFrame(det_res.data)
-        
-        valid_ids = df_cab['id'].astype(str).tolist() if 'id' in df_cab.columns else []
-        valid_tickets = df_cab['ticket_numero'].astype(str).tolist() if 'ticket_numero' in df_cab.columns else []
-        
         df_det['venta_id_str'] = df_det['venta_id'].astype(str)
-        df_det_filtered = df_det[df_det['venta_id_str'].isin(valid_ids) | df_det['venta_id_str'].isin(valid_tickets)]
+        
+        df_det_filtered = df_det[df_det['venta_id_str'].isin(valid_ids)]
         
         if df_det_filtered.empty: return 0.0, 0
         
@@ -223,7 +228,7 @@ if st.session_state.logged_in:
 menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL (Estilo "Simple" App)
+# 📈 MÓDULO 0: DASHBOARD GENERAL
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
     st.markdown('<div class="main-header">Panel de Control General</div>', unsafe_allow_html=True)
@@ -242,7 +247,6 @@ if menu == "📈 DASHBOARD GENERAL":
             pedidos_mes = len(df_mes)
             ticket_promedio = v_mes / pedidos_mes if pedidos_mes > 0 else 0
             
-            # Gráficos estilo velocímetro (Gauges)
             col_dash1, col_dash2, col_dash3 = st.columns([1, 1, 2])
             
             with col_dash1:
@@ -330,7 +334,6 @@ elif menu == "🛒 VENTAS (POS)":
             total_venta = 0.0
             costo_total = 0.0
             
-            # Carrito Limpio y Alineado (Regateo Integrado)
             st.markdown("<div style='font-size:12px; color:gray; font-weight:bold; display:flex;'><div style='width:45%;'>Producto</div><div style='width:25%; text-align:center;'>Precio Final</div><div style='width:20%; text-align:center;'>Cant.</div></div>", unsafe_allow_html=True)
             st.write("")
 
@@ -379,7 +382,6 @@ elif menu == "🛒 VENTAS (POS)":
 
                 st.markdown('<div class="btn-checkout">', unsafe_allow_html=True)
                 
-                # 🛡️ CÓDIGO A PRUEBA DE FALLOS EN FACTURACIÓN
                 if st.button("FINALIZAR VENTA E IMPRIMIR", use_container_width=True):
                     if vendedor_seleccionado == "Seleccionar...": st.error("🛑 Selecciona tu usuario (Vendedor).")
                     elif pago != "Efectivo" and not ref_pago: st.error("🛑 Ingresa la referencia del pago.")
@@ -399,16 +401,14 @@ elif menu == "🛒 VENTAS (POS)":
                             cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             if cli_id is not None: datos_insert["cliente_id"] = cli_id
                             
-                            # IGNORA EL ERROR SI NO EXISTE LA COLUMNA DE CLIENTE EN TU BD
                             try: supabase.table("ventas_cabecera").insert(datos_insert).execute()
                             except Exception:
                                 if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
                                 supabase.table("ventas_cabecera").insert(datos_insert).execute()
 
-                            # IGNORA EL ERROR SI LA COLUMNA ID NO EXISTE EN TU BD
                             v_res = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", t_num).execute()
-                            v_id = t_num 
-                            if v_res.data: v_id = v_res.data[0].get('id', t_num)
+                            v_id = str(t_num) 
+                            if v_res.data: v_id = str(v_res.data[0].get('id', t_num))
                             
                             items_html = ""
                             for it in st.session_state.carrito:
@@ -458,7 +458,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", search_dev.upper()).execute()
                 if v_cab.data:
                     v_row = v_cab.data[0]
-                    v_id_search = v_row.get('id', v_row.get('ticket_numero'))
+                    v_id_search = str(v_row.get('id', v_row.get('ticket_numero')))
                     st.success(f"✅ Ticket Encontrado. Pago: {v_row['metodo_pago']}")
                     v_det = supabase.table("ventas_detalle").select("*").eq("venta_id", v_id_search).execute()
                     
@@ -667,7 +667,6 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and "inventario_ver" in st.session_state.
                 if not df_ca.empty:
                     valid_ids = df_ca['id'].astype(str).tolist() if 'id' in df_ca.columns else df_ca['ticket_numero'].astype(str).tolist()
                     
-                    # Usar motor robusto
                     det_res = supabase.table("ventas_detalle").select("*").order("id", desc=True).limit(3000).execute()
                     if det_res.data:
                         df_da = pd.DataFrame(det_res.data)
@@ -828,7 +827,7 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
                         if not s_ts.empty: h_out = s_ts.max().strftime('%I:%M %p')
                         if not i_ts.empty and not s_ts.empty: hrs_hoy = (s_ts.max() - i_ts.min()).total_seconds() / 3600
                 
-                # 2. Módulo Ventas del Empleado (Con Motor de Costos Blindado)
+                # 2. Módulo Ventas del Empleado
                 cab_v = supabase.table("ventas_cabecera").select("*").eq("usuario_id", sel_u_id).execute()
                 v_hoy_ventas, v_hoy_costo, v_hoy_utilidad = 0.0, 0.0, 0.0
                 
@@ -918,7 +917,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                     v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                     tot_v = v_efe + v_dig
                     
-                    # 🛡️ CÁLCULO DE COSTO A PRUEBA DE FALLOS
                     tot_costo, c_ven = calcular_costo_y_cantidad_ventas(cab.data)
                 
                 if gst.data: tot_gst = sum(g['monto'] for g in gst.data)

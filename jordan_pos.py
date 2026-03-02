@@ -17,6 +17,15 @@ supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
 
 st.set_page_config(page_title="JORDAN POS ERP", layout="wide", page_icon="📱", initial_sidebar_state="expanded")
 
+ERROR_ADMIN = "🚨 Error del sistema. Contactar al administrador."
+
+# ==========================================
+# 1.5 RELOJ INTERNO (FORZAR HORA PERÚ)
+# ==========================================
+def get_now():
+    # Garantiza que todo el sistema use la hora exacta de Lima, evitando descuadres de servidor
+    return pd.Timestamp.now('America/Lima').to_pydatetime()
+
 # ==========================================
 # 2. SEGURIDAD Y ENCRIPTACIÓN (BCRYPT)
 # ==========================================
@@ -29,7 +38,7 @@ def verify_password(input_password, stored_password):
     return input_password == stored_password
 
 # ==========================================
-# 3. DISEÑO VISUAL UX/UI
+# 3. DISEÑO VISUAL UX/UI (MODERNO Y COMPACTO)
 # ==========================================
 st.markdown("""
     <style>
@@ -69,7 +78,7 @@ components.html("""
 # ==========================================
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [],
-    'carrito': [], 'last_ticket_html': None, 'ticket_cierre': None,
+    'carrito': [], 'last_ticket_html': None, 'print_trigger': False, 'ticket_cierre': None,
     'iny_alm_cod': "", 'api_nombre_sugerido': ""
 }
 for key, value in keys_to_init.items():
@@ -206,8 +215,9 @@ if menu == "📈 DASHBOARD GENERAL":
         if v_db.data:
             df_v = pd.DataFrame(v_db.data)
             df_v['fecha'] = pd.to_datetime(df_v['created_at']).dt.tz_convert('America/Lima').dt.date
-            hoy = datetime.now().date()
-            mes = datetime.now().month
+            
+            hoy = get_now().date()
+            mes = get_now().month
             
             v_hoy = df_v[df_v['fecha'] == hoy]['total_venta'].sum()
             v_mes = df_v[pd.to_datetime(df_v['created_at']).dt.tz_convert('America/Lima').dt.month == mes]['total_venta'].sum()
@@ -228,9 +238,21 @@ if menu == "📈 DASHBOARD GENERAL":
 # 🛒 MÓDULO 1: VENTAS (POS) 
 # ==========================================
 elif menu == "🛒 VENTAS (POS)":
+    
+    # 📌 LÓGICA DE IMPRESIÓN Y VISUALIZACIÓN RESTAURADA
     if st.session_state.last_ticket_html:
-        components.html(st.session_state.last_ticket_html, width=0, height=0)
-        st.session_state.last_ticket_html = None 
+        if st.session_state.print_trigger:
+            components.html(st.session_state.last_ticket_html, width=0, height=0)
+            st.session_state.print_trigger = False
+        
+        st.success("✅ Venta procesada exitosamente. Aquí está el ticket generado:")
+        # Renderizamos el ticket de forma segura para que sea visible en pantalla
+        html_visible = st.session_state.last_ticket_html.replace("<script>window.onload=function(){window.print();}</script>", "")
+        st.markdown(html_visible, unsafe_allow_html=True)
+        
+        if st.button("🧹 Limpiar Pantalla (Atender Siguiente Cliente)", type="primary"):
+            st.session_state.last_ticket_html = None
+            st.rerun()
 
     col_v1, col_v2 = st.columns([1.3, 1.7])
     
@@ -333,37 +355,30 @@ elif menu == "🛒 VENTAS (POS)":
                             vendedor_id = vendedor_opciones[vendedor_seleccionado]
                             t_num = f"AJ-{int(time.time())}"
                             
-                            # 1. Preparar datos base (Seguros)
                             datos_insert = {
                                 "ticket_numero": t_num, 
                                 "total_venta": total_venta, 
                                 "metodo_pago": pago, 
-                                "tipo_comprobante": "Ticket", # <-- CAMPO RESTAURADO PARA EVITAR ERROR
+                                "tipo_comprobante": "Ticket",
                                 "usuario_id": vendedor_id, 
                                 "referencia_pago": ref_pago
                             }
                             
-                            # 2. Añadir cliente SOLO si existe en el diccionario
                             cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             if cli_id is not None:
                                 datos_insert["cliente_id"] = cli_id
                             
-                            # 3. Intentar guardar cabecera (Con escudo anti-fallas de SQL)
+                            # 🛡️ ESCUDO ANTIFALLOS SQL
                             try:
                                 supabase.table("ventas_cabecera").insert(datos_insert).execute()
-                            except Exception as db_err:
-                                # Si la tabla ventas_cabecera aún no tiene la columna cliente_id, la ignoramos y guardamos la venta
-                                if "cliente_id" in str(db_err) and "cliente_id" in datos_insert:
-                                    del datos_insert["cliente_id"]
-                                    supabase.table("ventas_cabecera").insert(datos_insert).execute()
-                                else:
-                                    raise db_err
+                            except Exception:
+                                # Si falla (por ej. si no creaste la tabla clientes), borramos el dato problemático e intentamos de nuevo.
+                                if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
+                                supabase.table("ventas_cabecera").insert(datos_insert).execute()
 
-                            # 4. Obtener ID de la venta recién creada
                             v_res = supabase.table("ventas_cabecera").select("id").eq("ticket_numero", t_num).execute()
                             v_id = v_res.data[0]['id']
                             
-                            # 5. Guardar detalles, descontar stock y kardex
                             items_html = ""
                             for it in st.session_state.carrito:
                                 supabase.table("ventas_detalle").insert({
@@ -372,25 +387,23 @@ elif menu == "🛒 VENTAS (POS)":
                                 }).execute()
                                 
                                 stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
-                                nuevo_stock = stk.data[0]['stock_actual'] - it['cant']
-                                supabase.table("productos").update({"stock_actual": nuevo_stock}).eq("codigo_barras", it['id']).execute()
-                                
+                                supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
                                 registrar_kardex(it['id'], vendedor_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
                                 items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
                             
-                            # 6. Generar Ticket HTML (En una sola línea para evitar fallos visuales)
-                            fecha_tk = datetime.now().strftime('%d/%m/%Y %H:%M')
+                            fecha_tk = get_now().strftime('%d/%m/%Y %H:%M')
                             nom_cliente = cliente_sel.split(' - ')[0] if cli_id else 'General'
-                            c_base = f"--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {vendedor_seleccionado}<br>CLIENTE: {nom_cliente}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"
                             
+                            c_base = f"--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {vendedor_seleccionado}<br>CLIENTE: {nom_cliente}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"
                             tk_html = f"<div class='ticket-termico'><center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>{c_base}<center>¡Gracias por su compra!</center></div><div class='linea-corte'><span>✂️</span></div><div class='ticket-termico'><center><b>ACCESORIOS JORDAN</b><br>CONTROL INTERNO</center><br>{c_base}</div><script>window.onload=function(){{window.print();}}</script>"
                             
                             supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": tk_html}).execute()
+                            
                             st.session_state.last_ticket_html = tk_html
+                            st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: 
-                            st.error(f"🚨 Error crítico al facturar: {str(e)}")
+                        except Exception as e: st.error(f"Error al facturar: Comunica al administrador. {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -492,8 +505,8 @@ elif menu == "💵 GASTOS OPERATIVOS" and "reportes" in st.session_state.user_pe
                 
     with t2:
         try:
-            hoy = datetime.now().date().isoformat()
-            gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("fecha", hoy).execute()
+            hoy_str = get_now().strftime('%Y-%m-%d')
+            gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("fecha", hoy_str).execute()
             if gst.data:
                 df_g = pd.DataFrame(gst.data)
                 df_g['Usuario'] = df_g['usuarios'].apply(lambda x: x['nombre_completo'] if isinstance(x, dict) else '')
@@ -697,7 +710,7 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
                     df_a['month'] = df_a['ts'].dt.month
 
                 st.markdown("---")
-                filtro_fecha = st.date_input("📆 Buscar Rendimiento por Día:", value=datetime.now().date())
+                filtro_fecha = st.date_input("📆 Buscar Rendimiento por Día:", value=get_now().date())
                 
                 h_in, h_out, hrs_hoy = "--:--", "--:--", 0.0
                 v_hoy_ventas, v_hoy_costo, v_hoy_utilidad = 0.0, 0.0, 0.0
@@ -724,7 +737,7 @@ elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state
             except: pass
 
 # ==========================================
-# 📊 MÓDULO 8: REPORTES Y CIERRE (CON ALERTAS Y GASTOS)
+# 📊 MÓDULO 8: REPORTES Y CIERRE (RESTAURADO COMPLETO)
 # ==========================================
 elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.user_perms or "reportes" in st.session_state.user_perms):
     st.subheader("Auditoría Financiera y Cierre")
@@ -759,58 +772,104 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
             st.session_state.ticket_cierre = None
             st.rerun()
     else:
-        try:
-            last_cierre = get_last_cierre_dt()
-            st.caption(f"Desde: {last_cierre.strftime('%d/%m/%Y %H:%M')}")
-            
-            cab = supabase.table("ventas_cabecera").select("*").gte("created_at", last_cierre.isoformat()).execute()
-            det = supabase.table("ventas_detalle").select("*, productos(costo_compra)").gte("created_at", last_cierre.isoformat()).execute()
-            gst = supabase.table("gastos").select("monto").gte("fecha", last_cierre.isoformat()).execute()
-            
-            tot_v, v_efe, v_dig, tot_costo, tot_gst = 0.0, 0.0, 0.0, 0.0, 0.0
-            c_ven = 0
-            
-            if cab.data:
-                df_c = pd.DataFrame(cab.data)
-                v_efe = df_c[df_c['metodo_pago'] == 'Efectivo']['total_venta'].sum()
-                v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
-                tot_v = v_efe + v_dig
-            
-            if det.data:
-                df_d = pd.DataFrame(det.data)
-                tot_costo = (df_d['productos'].apply(lambda x: float(x.get('costo_compra',0))) * df_d['cantidad']).sum()
-                c_ven = df_d['cantidad'].sum()
+        # Pestañas Restauradas
+        t_rep1, t_rep2, t_rep3 = st.tabs(["📊 Balance y Cierre", "🧾 Historial de Tickets", "👤 Por Vendedor"])
+        
+        last_cierre = get_last_cierre_dt()
+        cab = supabase.table("ventas_cabecera").select("*").gte("created_at", last_cierre.isoformat()).execute()
+        det = supabase.table("ventas_detalle").select("*, productos(costo_compra), ventas_cabecera(usuario_id)").gte("created_at", last_cierre.isoformat()).execute()
+        gst = supabase.table("gastos").select("monto").gte("fecha", last_cierre.isoformat()).execute()
+        
+        with t_rep1:
+            try:
+                st.caption(f"Contabilizando desde: {last_cierre.strftime('%d/%m/%Y %H:%M')}")
                 
-            if gst.data: tot_gst = sum(g['monto'] for g in gst.data)
-            
-            caja_efectivo = v_efe - tot_gst
-            utilidad = tot_v - tot_costo - tot_gst
-            
-            c1, c2, c3, c4 = st.columns(4)
-            c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas</div><div class='metric-value'>S/.{tot_v:.2f}</div></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-box'><div class='metric-title'>Efectivo</div><div class='metric-value'>S/.{v_efe:.2f}</div></div>", unsafe_allow_html=True)
-            c3.markdown(f"<div class='metric-box'><div class='metric-title'>Gastos (-)</div><div class='metric-value metric-red'>S/.{tot_gst:.2f}</div></div>", unsafe_allow_html=True)
-            c4.markdown(f"<div class='metric-box' style='border:2px solid #10b981;'><div class='metric-title'>EFECTIVO CAJA</div><div class='metric-value metric-green'>S/.{caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
-            
-            st.divider()
-            if "cierre_caja" in st.session_state.user_perms:
-                with st.form("f_cierre"):
-                    st.write("Generar Reporte Z")
-                    if st.form_submit_button("🔒 APROBAR CIERRE", type="primary"):
-                        supabase.table("cierres_caja").insert({"total_ventas": tot_v, "utilidad": utilidad}).execute()
-                        
-                        bajos = supabase.table("productos").select("nombre, stock_actual").lte("stock_actual", 20).execute()
-                        alert_html = ""
-                        if bajos.data:
-                            alert_html = "<b>⚠️ ALERTAS STOCK (<=20):</b><br>"
-                            for b in bajos.data: alert_html += f"- {b['nombre']}: {b['stock_actual']} ud<br>"
-                            alert_html += "--------------------------------<br>"
+                tot_v, v_efe, v_dig, tot_costo, tot_gst = 0.0, 0.0, 0.0, 0.0, 0.0
+                c_ven = 0
+                
+                if cab.data:
+                    df_c = pd.DataFrame(cab.data)
+                    v_efe = df_c[df_c['metodo_pago'] == 'Efectivo']['total_venta'].sum()
+                    v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
+                    tot_v = v_efe + v_dig
+                
+                if det.data:
+                    df_d = pd.DataFrame(det.data)
+                    tot_costo = (df_d['productos'].apply(lambda x: float(x.get('costo_compra',0))) * df_d['cantidad']).sum()
+                    c_ven = df_d['cantidad'].sum()
+                    
+                if gst.data: tot_gst = sum(g['monto'] for g in gst.data)
+                
+                caja_efectivo = v_efe - tot_gst
+                utilidad = tot_v - tot_costo - tot_gst
+                
+                c1, c2, c3, c4 = st.columns(4)
+                c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Brutas</div><div class='metric-value'>S/.{tot_v:.2f}</div></div>", unsafe_allow_html=True)
+                c2.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Efectivo</div><div class='metric-value'>S/.{v_efe:.2f}</div></div>", unsafe_allow_html=True)
+                c3.markdown(f"<div class='metric-box'><div class='metric-title'>Gastos de Caja (-)</div><div class='metric-value metric-red'>S/.{tot_gst:.2f}</div></div>", unsafe_allow_html=True)
+                c4.markdown(f"<div class='metric-box' style='border:2px solid #10b981;'><div class='metric-title'>EFECTIVO FÍSICO FINAL</div><div class='metric-value metric-green'>S/.{caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
+                
+                st.divider()
+                if "cierre_caja" in st.session_state.user_perms:
+                    with st.form("f_cierre"):
+                        st.write("Generar Reporte Z (Fin de turno)")
+                        if st.form_submit_button("🔒 APROBAR CIERRE DE CAJA", type="primary"):
+                            supabase.table("cierres_caja").insert({"total_ventas": tot_v, "utilidad": utilidad}).execute()
                             
-                        st.session_state.ticket_cierre = {
-                            'fecha': datetime.now().strftime('%d/%m %H:%M'),
-                            'cant_vendida': c_ven, 'tot_ventas': tot_v, 'ventas_efectivo': v_efe, 'ventas_digital': v_dig,
-                            'capital_inv': tot_costo, 'tot_dev': 0, 'tot_merma': 0, 'tot_gastos': tot_gst,
-                            'caja_efectivo': caja_efectivo, 'utilidad': utilidad, 'alertas_stock': alert_html
-                        }
-                        st.rerun()
-        except: pass
+                            bajos = supabase.table("productos").select("nombre, stock_actual").lte("stock_actual", 20).execute()
+                            alert_html = ""
+                            if bajos.data:
+                                alert_html = "<b>⚠️ ALERTAS STOCK (<=20):</b><br>"
+                                for b in bajos.data: alert_html += f"- {b['nombre']}: {b['stock_actual']} ud<br>"
+                                alert_html += "--------------------------------<br>"
+                                
+                            st.session_state.ticket_cierre = {
+                                'fecha': get_now().strftime('%d/%m %H:%M'),
+                                'cant_vendida': c_ven, 'tot_ventas': tot_v, 'ventas_efectivo': v_efe, 'ventas_digital': v_dig,
+                                'capital_inv': tot_costo, 'tot_dev': 0, 'tot_merma': 0, 'tot_gastos': tot_gst,
+                                'caja_efectivo': caja_efectivo, 'utilidad': utilidad, 'alertas_stock': alert_html
+                            }
+                            st.rerun()
+            except: pass
+
+        with t_rep2:
+            st.write("Historial de Comprobantes Emitidos (Últimos 50)")
+            try:
+                tks = supabase.table("ticket_historial").select("ticket_numero, fecha, html_payload").order("fecha", desc=True).limit(50).execute()
+                if tks.data:
+                    df_tks = pd.DataFrame(tks.data)
+                    df_tks['fecha_format'] = pd.to_datetime(df_tks['fecha']).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %H:%M')
+                    opciones = [f"{row['ticket_numero']} - {row['fecha_format']}" for _, row in df_tks.iterrows()]
+                    sel_tk = st.selectbox("Selecciona un ticket para visualizarlo", opciones)
+                    if sel_tk:
+                        tk_num = sel_tk.split(" - ")[0]
+                        html_raw = df_tks[df_tks['ticket_numero'] == tk_num]['html_payload'].iloc[0]
+                        st.markdown(html_raw.replace("<script>window.onload=function(){window.print();}</script>", ""), unsafe_allow_html=True)
+            except: pass
+
+        with t_rep3:
+            st.write("Rendimiento por Vendedor (Turno Actual)")
+            try:
+                if det.data:
+                    df_d = pd.DataFrame(det.data)
+                    usuarios_db = load_data_cached("usuarios")
+                    user_dict = {u['id']: u['nombre_completo'] for _, u in usuarios_db.iterrows()} if not usuarios_db.empty else {}
+                    
+                    df_d['Vendedor'] = df_d['ventas_cabecera'].apply(lambda x: user_dict.get(x.get('usuario_id'), 'Desconocido') if isinstance(x, dict) else 'Desconocido')
+                    df_d['Costo_Total'] = df_d['productos'].apply(lambda x: float(x.get('costo_compra', 0))) * df_d['cantidad']
+                    
+                    vendedores_activos = df_d['Vendedor'].unique()
+                    sel_v = st.selectbox("Vendedor:", vendedores_activos)
+                    
+                    df_v_ventas = df_d[df_d['Vendedor'] == sel_v]
+                    v_ventas = df_v_ventas['subtotal'].sum()
+                    v_costo = df_v_ventas['Costo_Total'].sum()
+                    v_utilidad = v_ventas - v_costo
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas de {sel_v}</div><div class='metric-value'>S/. {v_ventas:.2f}</div></div>", unsafe_allow_html=True)
+                    c2.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value metric-orange'>- S/. {v_costo:.2f}</div></div>", unsafe_allow_html=True)
+                    c3.markdown(f"<div class='metric-box'><div class='metric-title'>Ganancia Neta</div><div class='metric-value metric-green'>S/. {v_utilidad:.2f}</div></div>", unsafe_allow_html=True)
+                else:
+                    st.info("No hay ventas registradas en este turno aún.")
+            except: pass

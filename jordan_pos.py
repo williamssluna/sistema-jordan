@@ -19,10 +19,20 @@ supabase = create_client(URL_SUPABASE, KEY_SUPABASE)
 st.set_page_config(page_title="JORDAN POS ERP", layout="wide", page_icon="📱", initial_sidebar_state="expanded")
 
 # ==========================================
-# 1.5 RELOJ INTERNO (FORZAR HORA PERÚ)
+# 1.5 RELOJ INTERNO Y BÚSQUEDA DE ARCHIVOS
 # ==========================================
 def get_now():
     return pd.Timestamp.now('America/Lima').to_pydatetime()
+
+def get_qr_path(metodo):
+    # Buscador inteligente de QR sin importar mayúsculas o extensiones
+    base = f"qr_{metodo.lower()}"
+    try:
+        for f in os.listdir('.'):
+            if f.lower().startswith(base) and f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                return f
+    except: pass
+    return None
 
 # ==========================================
 # 2. SEGURIDAD Y ENCRIPTACIÓN
@@ -66,7 +76,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Autofocus
 components.html("""<script>const inputs = window.parent.document.querySelectorAll('input[type="text"]'); if(inputs.length > 0) { inputs[0].focus(); }</script>""", height=0)
 
 # ==========================================
@@ -99,11 +108,12 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True)
 
-# 🛡️ MOTOR MATEMÁTICO 100% SEGURO (CRUCE LOCAL EN PANDAS)
+# 🛡️ MOTOR MATEMÁTICO 100% SEGURO (NUNCA MÁS S/. 0.00)
 def procesar_cruces_seguros(df_cabeceras):
     if df_cabeceras.empty: return pd.DataFrame(), 0.0, 0
     try:
-        res_det = supabase.table("ventas_detalle").select("*").order("id", desc=True).limit(10000).execute()
+        # Petición limpia sin order() que bloqueaba Supabase
+        res_det = supabase.table("ventas_detalle").select("*").execute()
         res_prod = supabase.table("productos").select("codigo_barras, costo_compra, nombre").execute()
         
         if not res_det.data or not res_prod.data: return pd.DataFrame(), 0.0, 0
@@ -111,19 +121,24 @@ def procesar_cruces_seguros(df_cabeceras):
         df_det = pd.DataFrame(res_det.data)
         df_prod = pd.DataFrame(res_prod.data)
         
-        valid_ids = df_cabeceras['id'].astype(str).tolist() if 'id' in df_cabeceras.columns else df_cabeceras['ticket_numero'].astype(str).tolist()
+        valid_ids = []
+        if 'id' in df_cabeceras.columns: valid_ids.extend(df_cabeceras['id'].astype(str).tolist())
+        if 'ticket_numero' in df_cabeceras.columns: valid_ids.extend(df_cabeceras['ticket_numero'].astype(str).tolist())
+            
         df_det['venta_id_str'] = df_det['venta_id'].astype(str)
-        
         df_filt = df_det[df_det['venta_id_str'].isin(valid_ids)].copy()
+        
         if df_filt.empty: return pd.DataFrame(), 0.0, 0
         
         cant_total = int(df_filt['cantidad'].sum())
-        
-        c_map = {str(row['codigo_barras']): float(row.get('costo_compra', 0.0)) for _, row in df_prod.iterrows()}
+        c_map = {str(row['codigo_barras']): float(row.get('costo_compra') or 0.0) for _, row in df_prod.iterrows()}
         n_map = {str(row['codigo_barras']): str(row.get('nombre', 'Producto')) for _, row in df_prod.iterrows()}
         
         df_filt['costo_unit'] = df_filt['producto_id'].astype(str).apply(lambda x: c_map.get(x, 0.0))
         df_filt['nombre_prod'] = df_filt['producto_id'].astype(str).apply(lambda x: n_map.get(x, 'N/A'))
+        
+        df_filt['cantidad'] = df_filt['cantidad'].astype(float)
+        df_filt['costo_unit'] = df_filt['costo_unit'].astype(float)
         costo_total = float((df_filt['costo_unit'] * df_filt['cantidad']).sum())
         
         return df_filt, costo_total, cant_total
@@ -215,7 +230,7 @@ if st.session_state.logged_in:
 menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL (Premium UI)
+# 📈 MÓDULO 0: DASHBOARD GENERAL 
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
     st.markdown('<div class="main-header">Panel de Inteligencia Comercial</div>', unsafe_allow_html=True)
@@ -245,7 +260,6 @@ if menu == "📈 DASHBOARD GENERAL":
                 df_a['fecha_a'] = pd.to_datetime(df_a['timestamp']).dt.tz_convert('America/Lima').dt.date
                 df_a_hoy = df_a[df_a['fecha_a'] == hoy]
                 if not df_a_hoy.empty:
-                    # Filtramos los que tienen Ingreso pero no Salida
                     ingresos = df_a_hoy[df_a_hoy['tipo_marcacion'] == 'Ingreso']
                     salidas = df_a_hoy[df_a_hoy['tipo_marcacion'] == 'Salida']
                     activos = set(ingresos['usuario_id']) - set(salidas['usuario_id'])
@@ -259,8 +273,8 @@ if menu == "📈 DASHBOARD GENERAL":
             c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas de Hoy</div><div class='metric-value metric-green'>S/. {v_hoy:.2f}</div></div>", unsafe_allow_html=True)
             c2.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas del Mes</div><div class='metric-value metric-blue'>S/. {v_mes:.2f}</div></div>", unsafe_allow_html=True)
             
-            _, util_hoy, _ = procesar_cruces_seguros(df_hoy)
-            c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>S/. {v_hoy - util_hoy:.2f}</div></div>", unsafe_allow_html=True)
+            _, util_hoy_costo, _ = procesar_cruces_seguros(df_hoy)
+            c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>S/. {v_hoy - util_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
             
             html_personal = "Nadie en turno" if not personal_hoy else "<br>".join([f"🟢 {n}" for n in personal_hoy])
             c4.markdown(f"<div class='metric-box' style='padding-bottom:10px;'><div class='metric-title'>Personal en Tienda</div><div style='font-size:14px; font-weight:bold; color:#334155;'>{html_personal}</div></div>", unsafe_allow_html=True)
@@ -370,7 +384,7 @@ elif menu == "🛒 VENTAS (POS)":
                 vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
                 vendedor_seleccionado = st.selectbox("👤 Tu usuario (Vendedor):", ["Seleccionar..."] + list(vendedor_opciones.keys()))
 
-                # --- CRM EN POS (REQ 4) ---
+                # --- CRM INTEGRADO EN POS (DOBLE PROTECCIÓN) ---
                 try:
                     clientes_db = supabase.table("clientes").select("*").execute()
                     opciones_clientes = ["Público General (Sin registrar)"]
@@ -394,18 +408,24 @@ elif menu == "🛒 VENTAS (POS)":
                     if st.button("Guardar y Seleccionar"):
                         try:
                             supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
-                            st.success("Cliente guardado. Por favor, desmarca la casilla y búscalo en la lista."); time.sleep(2); st.rerun()
-                        except: st.error("DNI ya existe o error de conexión.")
+                            st.success("Cliente guardado. Desmarca la casilla y búscalo en la lista."); time.sleep(2); st.rerun()
+                        except Exception as e:
+                            if "correo" in str(e): # Escudo por si no crearon la columna correo en SQL
+                                try:
+                                    supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel}).execute()
+                                    st.success("Cliente guardado (Sin correo). Desmarca la casilla."); time.sleep(2); st.rerun()
+                                except: st.error("El DNI/RUC ya existe.")
+                            else: st.error("El DNI/RUC ya existe.")
 
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
                 
-                # --- CÓDIGO QR VISUAL (REQ 2) ---
+                # --- CÓDIGO QR INTELIGENTE ---
                 if pago in ["Yape", "Plin"]:
-                    st.info("📲 Muestra este QR al cliente:")
-                    path = "qr_yape.png" if pago == "Yape" else "qr_plin.png"
-                    if os.path.exists(path): st.image(path, width=150)
-                    else: st.caption(f"*(Guarda una imagen llamada '{path}' en la carpeta raíz para que aparezca aquí)*")
+                    st.info(f"📲 Muestra este QR al cliente para que pague con {pago}:")
+                    path_qr = get_qr_path(pago)
+                    if path_qr: st.image(path_qr, width=200)
+                    else: st.warning(f"⚠️ No se encontró la imagen '{pago}'. Sube una imagen llamada 'qr_{pago.lower()}.png' o '.jpg' a tu GitHub.")
 
                 ref_pago = ""
                 if pago != "Efectivo":
@@ -425,8 +445,7 @@ elif menu == "🛒 VENTAS (POS)":
                             cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             if cli_id is not None: datos_insert["cliente_id"] = cli_id
                             
-                            try:
-                                res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
+                            try: res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
                             except Exception:
                                 if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
                                 res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
@@ -473,7 +492,7 @@ elif menu == "🔄 DEVOLUCIONES":
     
     lista_vendedores = get_lista_usuarios()
     vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
-    tipo_b = st.radio("Método de búsqueda:", ["Por N° de Ticket", "Por Producto (Láser o Nombre)"], horizontal=True)
+    tipo_b = st.radio("Método de búsqueda:", ["Por N° de Ticket", "Por Producto Libre (Láser o Nombre)"], horizontal=True)
 
     if tipo_b == "Por N° de Ticket":
         search_dev = st.text_input("Ingresa N° de Ticket (Ej. AJ-123456)")
@@ -546,7 +565,7 @@ elif menu == "🔄 DEVOLUCIONES":
 # 🤝 MÓDULO 3: CLIENTES (CRM)
 # ==========================================
 elif menu == "🤝 CLIENTES (CRM)":
-    st.markdown('<div class="main-header">Gestión de Clientes y CRM</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">Base de Datos de Clientes</div>', unsafe_allow_html=True)
     t1, t2 = st.tabs(["📋 Lista de Clientes", "➕ Nuevo Cliente"])
     
     with t1:
@@ -554,14 +573,12 @@ elif menu == "🤝 CLIENTES (CRM)":
         try:
             cls_df = load_data("clientes")
             if not cls_df.empty: 
-                # Exportar a Excel/CSV (Req 4)
                 csv = cls_df.to_csv(index=False).encode('utf-8')
-                st.download_button(label="📥 Descargar Base de Datos (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
-                
+                st.download_button(label="📥 Descargar BD Excel (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
                 if 'correo' not in cls_df.columns: cls_df['correo'] = 'Sin registro'
                 st.dataframe(cls_df[['dni_ruc', 'nombre', 'telefono', 'correo', 'created_at']], use_container_width=True)
             else: st.info("No hay clientes registrados.")
-        except: st.error("Asegúrate de ejecutar el código SQL para crear/actualizar la tabla de clientes.")
+        except: st.error("Asegúrate de ejecutar el código SQL para crear la tabla de clientes.")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -569,20 +586,26 @@ elif menu == "🤝 CLIENTES (CRM)":
         with st.form("form_cli"):
             doc = st.text_input("DNI o RUC (Único)")
             nom = st.text_input("Nombre / Razón Social")
-            tel = st.text_input("Celular (Marketing WhatsApp)")
-            mail = st.text_input("Correo Electrónico")
+            tel = st.text_input("Celular (Para WhatsApp)")
+            mail = st.text_input("Correo Electrónico (Opcional)")
             if st.form_submit_button("Guardar Cliente", type="primary"):
                 if doc and nom:
                     try:
                         supabase.table("clientes").insert({"dni_ruc": doc, "nombre": nom, "telefono": tel, "correo": mail}).execute()
                         st.success("✅ Cliente guardado."); time.sleep(1); st.rerun()
-                    except: st.error("Error: El DNI/RUC ya existe.")
+                    except Exception as e:
+                        if "correo" in str(e):
+                            try:
+                                supabase.table("clientes").insert({"dni_ruc": doc, "nombre": nom, "telefono": tel}).execute()
+                                st.success("✅ Cliente guardado (Sin correo)."); time.sleep(1); st.rerun()
+                            except: st.error("Error: El DNI/RUC ya existe.")
+                        else: st.error("Error: El DNI/RUC ya existe.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 💵 MÓDULO 4: GASTOS OPERATIVOS
 # ==========================================
-elif menu == "💵 GASTOS OPERATIVOS":
+elif menu == "💵 GASTOS OPERATIVOS" and "reportes" in st.session_state.user_perms:
     st.markdown('<div class="main-header">Control de Gastos (Caja Chica)</div>', unsafe_allow_html=True)
     t1, t2 = st.tabs(["📝 Registrar Gasto", "📋 Historial Hoy"])
     with t1:
@@ -614,7 +637,7 @@ elif menu == "💵 GASTOS OPERATIVOS":
 # ==========================================
 # 📦 MÓDULO 5: ALMACÉN Y COMPRAS
 # ==========================================
-elif menu == "📦 ALMACÉN Y COMPRAS":
+elif menu == "📦 ALMACÉN Y COMPRAS" and "inventario_ver" in st.session_state.user_perms:
     st.markdown('<div class="main-header">Inventario y Catálogo</div>', unsafe_allow_html=True)
     t1, t2, t3, t4, t5 = st.tabs(["📋 Inventario General", "➕ Alta de Producto", "⚙️ Clasificación", "📓 KARDEX", "📈 Rotación de Productos"])
     
@@ -635,55 +658,57 @@ elif menu == "📦 ALMACÉN Y COMPRAS":
             df_show = df[['codigo_barras', 'nombre', 'Categoría', 'Marca', 'costo_compra', 'precio_lista', 'Margen %', 'stock_actual', 'stock_minimo']]
             st.dataframe(df_show.style.apply(highlight_stock, axis=1), use_container_width=True)
             
-            st.divider()
-            st.write("#### ⚡ Reabastecimiento Rápido")
-            with st.form("form_add_stock"):
-                col_r1, col_r2 = st.columns([3, 1])
-                sel_p = col_r1.selectbox("Producto a recargar:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
-                add_qty = col_r2.number_input("Cantidad entrante", min_value=1, step=1)
-                if st.form_submit_button("➕ Sumar Stock", type="primary"):
-                    if sel_p != "...":
-                        c_up = sel_p.split(" - ")[0]
-                        c_stk = int(df[df['codigo_barras'] == c_up]['stock_actual'].iloc[0])
-                        supabase.table("productos").update({"stock_actual": c_stk + add_qty}).eq("codigo_barras", c_up).execute()
-                        registrar_kardex(c_up, st.session_state.user_id, "INGRESO_REPOSICION", add_qty, "Reabastecimiento")
-                        st.success("✅ Stock actualizado."); time.sleep(1); st.rerun()
+            if "inventario_modificar" in st.session_state.user_perms:
+                st.divider()
+                st.write("#### ⚡ Reabastecimiento Rápido")
+                with st.form("form_add_stock"):
+                    col_r1, col_r2 = st.columns([3, 1])
+                    sel_p = col_r1.selectbox("Producto a recargar:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
+                    add_qty = col_r2.number_input("Cantidad entrante", min_value=1, step=1)
+                    if st.form_submit_button("➕ Sumar Stock", type="primary"):
+                        if sel_p != "...":
+                            c_up = sel_p.split(" - ")[0]
+                            c_stk = int(df[df['codigo_barras'] == c_up]['stock_actual'].iloc[0])
+                            supabase.table("productos").update({"stock_actual": c_stk + add_qty}).eq("codigo_barras", c_up).execute()
+                            registrar_kardex(c_up, st.session_state.user_id, "INGRESO_REPOSICION", add_qty, "Reabastecimiento")
+                            st.success("✅ Stock actualizado."); time.sleep(1); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t2:
-        st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        cats, mars = load_data_cached("categorias"), load_data_cached("marcas")
-        cals, comps = load_data_cached("calidades"), load_data_cached("compatibilidades")
-        with st.form("form_nuevo", clear_on_submit=True):
-            st.write("**Datos Principales**")
-            c1, c2 = st.columns([1, 2])
-            c_cod = c1.text_input("Código de Barras (Obligatorio)")
-            c_nom = c2.text_input("Nombre / Descripción del Producto")
-            
-            st.write("**Clasificación**")
-            f1, f2, f3, f8 = st.columns(4)
-            f_cat = f1.selectbox("Categoría", cats['nombre'].tolist() if not cats.empty else [])
-            f_mar = f2.selectbox("Marca", mars['nombre'].tolist() if not mars.empty else [])
-            f_cal = f3.selectbox("Calidad", cals['nombre'].tolist() if not cals.empty else [])
-            f_comp = f8.selectbox("Compatibilidad", comps['nombre'].tolist() if not comps.empty else [])
-            
-            st.write("**Costos y Almacén**")
-            f4, f5, f6, f7 = st.columns(4)
-            f_costo = f4.number_input("Costo Compra (S/.)", min_value=0.0)
-            f_venta = f5.number_input("Precio Sugerido (S/.)", min_value=0.0)
-            f_stock = f6.number_input("Stock Físico Inicial", min_value=0)
-            f_smin = f7.number_input("Alerta de Stock Mínimo", value=5)
-            
-            if st.form_submit_button("🚀 GUARDAR EN BASE DE DATOS", type="primary"):
-                if c_cod and c_nom:
-                    cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
-                    mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
-                    try:
-                        supabase.table("productos").insert({"codigo_barras": c_cod, "nombre": c_nom, "categoria_id": cid, "marca_id": mid, "calidad": f_cal, "compatibilidad": f_comp, "costo_compra": f_costo, "precio_lista": f_venta, "precio_minimo": f_venta, "stock_actual": f_stock, "stock_inicial": f_stock, "stock_minimo": f_smin}).execute()
-                        if f_stock > 0: registrar_kardex(c_cod, st.session_state.user_id, "INGRESO_COMPRA", f_stock, "Registro Inicial")
-                        st.success("✅ Producto Registrado Exitosamente."); time.sleep(1); st.rerun()
-                    except: st.error("❌ El código de barras ya existe.")
-        st.markdown('</div>', unsafe_allow_html=True)
+        if "inventario_agregar" in st.session_state.user_perms:
+            st.markdown('<div class="css-card">', unsafe_allow_html=True)
+            cats, mars = load_data_cached("categorias"), load_data_cached("marcas")
+            cals, comps = load_data_cached("calidades"), load_data_cached("compatibilidades")
+            with st.form("form_nuevo", clear_on_submit=True):
+                st.write("**Datos Principales**")
+                c1, c2 = st.columns([1, 2])
+                c_cod = c1.text_input("Código de Barras (Obligatorio)")
+                c_nom = c2.text_input("Nombre / Descripción del Producto")
+                
+                st.write("**Clasificación**")
+                f1, f2, f3, f8 = st.columns(4)
+                f_cat = f1.selectbox("Categoría", cats['nombre'].tolist() if not cats.empty else [])
+                f_mar = f2.selectbox("Marca", mars['nombre'].tolist() if not mars.empty else [])
+                f_cal = f3.selectbox("Calidad", cals['nombre'].tolist() if not cals.empty else [])
+                f_comp = f8.selectbox("Compatibilidad", comps['nombre'].tolist() if not comps.empty else [])
+                
+                st.write("**Costos y Almacén**")
+                f4, f5, f6, f7 = st.columns(4)
+                f_costo = f4.number_input("Costo Compra (S/.)", min_value=0.0)
+                f_venta = f5.number_input("Precio Sugerido (S/.)", min_value=0.0)
+                f_stock = f6.number_input("Stock Físico Inicial", min_value=0)
+                f_smin = f7.number_input("Alerta de Stock Mínimo", value=5)
+                
+                if st.form_submit_button("🚀 GUARDAR EN BASE DE DATOS", type="primary"):
+                    if c_cod and c_nom:
+                        cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
+                        mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
+                        try:
+                            supabase.table("productos").insert({"codigo_barras": c_cod, "nombre": c_nom, "categoria_id": cid, "marca_id": mid, "calidad": f_cal, "compatibilidad": f_comp, "costo_compra": f_costo, "precio_lista": f_venta, "precio_minimo": f_venta, "stock_actual": f_stock, "stock_inicial": f_stock, "stock_minimo": f_smin}).execute()
+                            if f_stock > 0: registrar_kardex(c_cod, st.session_state.user_id, "INGRESO_COMPRA", f_stock, "Registro Inicial")
+                            st.success("✅ Producto Registrado Exitosamente."); time.sleep(1); st.rerun()
+                        except: st.error("❌ El código de barras ya existe o faltan datos clave.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
     with t3:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -701,7 +726,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS":
 
     with t4:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        st.write("Registro inmutable de movimientos de mercadería (Kardex)")
+        st.write("Registro inmutable de movimientos de mercadería")
         k_data = supabase.table("movimientos_inventario").select("*, usuarios(nombre_completo)").order("timestamp", desc=True).limit(100).execute()
         if k_data.data:
             df_k = pd.DataFrame(k_data.data)
@@ -710,7 +735,6 @@ elif menu == "📦 ALMACÉN Y COMPRAS":
             st.dataframe(df_k[['Fecha', 'producto_id', 'tipo_movimiento', 'cantidad', 'Usuario']], use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ✅ REQ 5: ROTACIÓN REPARADA (No más tablas vacías)
     with t5:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         st.write("Consulta la rotación exacta de artículos en una fecha pasada.")
@@ -726,19 +750,18 @@ elif menu == "📦 ALMACÉN Y COMPRAS":
                     df_det, _, _ = procesar_cruces_seguros(df_ca_dia)
                     if not df_det.empty:
                         res_alm = df_det.groupby(['producto_id', 'nombre_prod']).agg(
-                            Unidades_Vendidas=('cantidad', 'sum'),
-                            Dinero_Generado=('subtotal', 'sum')
+                            Unidades_Vendidas=('cantidad', 'sum'), Dinero_Generado=('subtotal', 'sum')
                         ).reset_index().sort_values(by='Unidades_Vendidas', ascending=False)
                         st.dataframe(res_alm, use_container_width=True)
-                    else: st.info("No hay detalles de venta registrados.")
+                    else: st.info("No hay detalles de venta registrados para esta fecha.")
                 else: st.info("No hubo ventas en la fecha seleccionada.")
-        except Exception as e: st.error(f"Error procesando: {e}")
+        except Exception as e: st.error(f"Calculando rotación... {e}")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # ⚠️ MÓDULO 6: MERMAS 
 # ==========================================
-elif menu == "⚠️ MERMAS":
+elif menu == "⚠️ MERMAS" and "mermas" in st.session_state.user_perms:
     st.markdown('<div class="main-header">Registro de Mermas (Bajas)</div>', unsafe_allow_html=True)
     st.markdown('<div class="css-card">', unsafe_allow_html=True)
     col_m1, col_m2 = st.columns(2)
@@ -755,23 +778,23 @@ elif menu == "⚠️ MERMAS":
             p_inf = supabase.table("productos").select("*").eq("codigo_barras", m_cod).execute()
             if p_inf.data:
                 p_merma = p_inf.data[0]
-                st.write(f"**Producto:** {p_merma['nombre']} | **Stock Actual:** {p_merma['stock_actual']}")
+                st.write(f"**Producto a dar de baja:** {p_merma['nombre']} | **Stock Actual:** {p_merma['stock_actual']}")
                 with st.form("form_merma"):
-                    m_cant = st.number_input("Cantidad a desechar", min_value=1, max_value=int(p_merma['stock_actual']) if p_merma['stock_actual']>0 else 1)
-                    m_mot = st.selectbox("Motivo", ["Roto al instalar", "Falla de Fábrica", "Robo/Extravío"])
-                    if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA Y DESCONTAR STOCK"):
+                    m_cant = st.number_input("Cantidad física a desechar", min_value=1, max_value=int(p_merma['stock_actual']) if p_merma['stock_actual']>0 else 1)
+                    m_mot = st.selectbox("Motivo Operativo", ["Roto al instalar", "Falla de Fábrica", "Robo/Extravío"])
+                    if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA FINANCIERA"):
                         if p_merma['stock_actual'] >= m_cant:
                             supabase.table("productos").update({"stock_actual": p_merma['stock_actual'] - m_cant}).eq("codigo_barras", m_cod).execute()
                             supabase.table("mermas").insert({"usuario_id": st.session_state.user_id, "producto_id": m_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_merma['costo_compra'] * m_cant}).execute()
                             registrar_kardex(m_cod, st.session_state.user_id, "SALIDA_MERMA", m_cant, m_mot)
-                            st.success("✅ Baja registrada."); time.sleep(1); st.rerun()
+                            st.success("✅ Baja documentada exitosamente."); time.sleep(1); st.rerun()
         except: pass
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 👥 MÓDULO 7: GESTIÓN DE VENDEDORES (RRHH)
 # ==========================================
-elif menu == "👥 RRHH (Vendedores)":
+elif menu == "👥 RRHH (Vendedores)" and "gestion_usuarios" in st.session_state.user_perms:
     st.markdown('<div class="main-header">Centro de Recursos Humanos</div>', unsafe_allow_html=True)
     
     def format_permisos(lista):
@@ -799,8 +822,8 @@ elif menu == "👥 RRHH (Vendedores)":
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         with st.form("form_new_user", clear_on_submit=True):
             n_nombre = st.text_input("Nombre Completo")
-            n_user = st.text_input("Usuario (Login)")
-            n_pass = st.text_input("Contraseña")
+            n_user = st.text_input("Usuario (Para hacer Login)")
+            n_pass = st.text_input("Contraseña Temporal")
             n_turno = st.selectbox("Turno", ["Mañana", "Tarde", "Completo", "Rotativo"])
             n_perms = st.multiselect("Permisos Especiales:", ["mermas", "inventario_ver", "inventario_agregar", "inventario_modificar", "inventario_eliminar", "reportes", "cierre_caja", "gestion_usuarios"])
             if st.form_submit_button("Registrar Empleado", type="primary"):
@@ -809,16 +832,16 @@ elif menu == "👥 RRHH (Vendedores)":
                         hashed_pw = hash_password(n_pass)
                         supabase.table("usuarios").insert({"nombre_completo": n_nombre, "usuario": n_user, "clave": hashed_pw, "turno": n_turno, "permisos": n_perms, "estado": "Activo"}).execute()
                         st.success("✅ Cuenta Creada."); time.sleep(1.5); st.rerun()
-                    except: st.error("❌ El Usuario ya existe.")
+                    except: st.error("❌ El Nombre de Usuario (Login) ya existe en la base de datos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t_u3:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         if not df_activos.empty:
             with st.form("reset_pwd"):
-                c_u = st.selectbox("Usuario:", df_activos['usuario'].tolist())
-                n_pwd = st.text_input("Nueva Contraseña")
-                if st.form_submit_button("Actualizar", type="primary"):
+                c_u = st.selectbox("Usuario a modificar:", df_activos['usuario'].tolist())
+                n_pwd = st.text_input("Nueva Contraseña Obligatoria")
+                if st.form_submit_button("Actualizar Seguridad", type="primary"):
                     if n_pwd:
                         hashed_pw = hash_password(n_pwd)
                         supabase.table("usuarios").update({"clave": hashed_pw}).eq("usuario", c_u).execute()
@@ -828,7 +851,7 @@ elif menu == "👥 RRHH (Vendedores)":
     with t_u4:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         if not df_activos.empty:
-            user_to_edit = st.selectbox("Seleccionar vendedor:", df_activos['usuario'].tolist(), key="sel_edit_perm")
+            user_to_edit = st.selectbox("Seleccionar vendedor a editar:", df_activos['usuario'].tolist(), key="sel_edit_perm")
             raw_perms = supabase.table("usuarios").select("permisos").eq("usuario", user_to_edit).execute().data[0]['permisos']
             curr_perms = raw_perms if isinstance(raw_perms, list) else []
             with st.form("form_edit_perms"):
@@ -837,10 +860,10 @@ elif menu == "👥 RRHH (Vendedores)":
                 new_perms = st.multiselect("Permisos Activos:", lista_permisos, default=valid_curr)
                 if st.form_submit_button("💾 Actualizar Accesos", type="primary"):
                     if user_to_edit == "admin" and "gestion_usuarios" not in new_perms:
-                        st.error("⚠️ No puedes despojar al admin de RRHH.")
+                        st.error("⚠️ Operación Bloqueada: No puedes despojar al 'admin' de su acceso a RRHH.")
                     else:
                         supabase.table("usuarios").update({"permisos": new_perms}).eq("usuario", user_to_edit).execute()
-                        st.success(f"✅ Permisos actualizados."); time.sleep(1); st.rerun()
+                        st.success(f"✅ Niveles de acceso actualizados."); time.sleep(1); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t_u5:
@@ -850,54 +873,48 @@ elif menu == "👥 RRHH (Vendedores)":
             if not df_activos.empty:
                 v_b = df_activos[df_activos['usuario'] != 'admin']['usuario'].tolist()
                 if v_b:
-                    u_del = st.selectbox("Suspender:", v_b)
-                    if st.button("🗑️ INHABILITAR"):
+                    u_del = st.selectbox("Suspender Acceso:", v_b)
+                    if st.button("🗑️ INHABILITAR USUARIO"):
                         supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute(); st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             if not df_inactivos.empty:
-                u_react = st.selectbox("Reactivar:", df_inactivos['usuario'].tolist())
-                if st.button("✅ RESTAURAR", type="primary"):
+                u_react = st.selectbox("Reactivar Acceso:", df_inactivos['usuario'].tolist())
+                if st.button("✅ RESTAURAR USUARIO", type="primary"):
                     supabase.table("usuarios").update({"estado": "Activo"}).eq("usuario", u_react).execute(); st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # ✅ REQ 8: DÍAS TRABAJADOS Y RENDIMIENTO
     with t_u6:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         if not df_activos.empty:
-            st.write("#### 🎯 Informe Integral")
-            sel_u_nombre = st.selectbox("Selecciona empleado:", df_activos['nombre_completo'].tolist(), key="rrhh_vendedor")
+            sel_u_nombre = st.selectbox("Selecciona un empleado para auditoría completa:", df_activos['nombre_completo'].tolist(), key="rrhh_vendedor")
             sel_u_id = df_activos[df_activos['nombre_completo'] == sel_u_nombre]['id'].iloc[0]
             f_rrhh_dia = st.date_input("📆 Día a auditar:", value=get_now().date(), key="f_rrhh_dia")
             
             try:
-                # 1. Asistencia
+                # 1. Asistencia Mensual y Diaria
                 ast_db = supabase.table("asistencia").select("*").eq("usuario_id", sel_u_id).execute()
                 df_a = pd.DataFrame(ast_db.data) if ast_db.data else pd.DataFrame()
                 
                 h_in, h_out, hrs_hoy, dias_faltados, dias_asistidos = "--:--", "--:--", 0.0, 0, 0
-                df_tabla_asistencia = pd.DataFrame()
-
+                
                 if not df_a.empty:
                     df_a['ts'] = pd.to_datetime(df_a['timestamp']).dt.tz_convert('America/Lima')
                     df_a['date'] = df_a['ts'].dt.date
                     df_a['month'] = df_a['ts'].dt.month
                     
                     dias_asistidos = df_a[df_a['month'] == f_rrhh_dia.month]['date'].nunique()
-                    df_hoy_a = df_a[df_a['date'] == f_rrhh_dia]
                     
+                    df_hoy_a = df_a[df_a['date'] == f_rrhh_dia]
                     if not df_hoy_a.empty:
-                        df_tabla_asistencia = df_hoy_a[['tipo_marcacion', 'ts']].copy()
-                        df_tabla_asistencia['Hora'] = df_tabla_asistencia['ts'].dt.strftime('%I:%M %p')
-                        
                         i_ts = df_hoy_a[df_hoy_a['tipo_marcacion'] == 'Ingreso']['ts']
                         s_ts = df_hoy_a[df_hoy_a['tipo_marcacion'] == 'Salida']['ts']
                         if not i_ts.empty: h_in = i_ts.min().strftime('%I:%M %p')
                         if not s_ts.empty: h_out = s_ts.max().strftime('%I:%M %p')
                         if not i_ts.empty and not s_ts.empty: hrs_hoy = (s_ts.max() - i_ts.min()).total_seconds() / 3600
                 
-                dias_totales_mes = f_rrhh_dia.day 
+                dias_totales_mes = get_now().date().day if f_rrhh_dia.month == get_now().month else 30
                 dias_faltados = dias_totales_mes - dias_asistidos if dias_totales_mes > dias_asistidos else 0
 
                 # 2. Rendimiento Financiero Seguro
@@ -914,31 +931,31 @@ elif menu == "👥 RRHH (Vendedores)":
                         _, v_hoy_costo, _ = procesar_cruces_seguros(df_cv_dia)
                         v_hoy_utilidad = v_hoy_ventas - v_hoy_costo
 
-                st.write("**Productividad**")
+                st.write("**Desempeño Financiero (Productividad del Empleado)**")
                 c4, c5, c6 = st.columns(3)
-                c4.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Realizadas</div><div class='metric-value-small metric-blue'>S/. {v_hoy_ventas:.2f}</div></div>", unsafe_allow_html=True)
-                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>- S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
-                c6.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>Utilidad Generada</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
+                c4.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero a Caja</div><div class='metric-value-small metric-blue'>S/. {v_hoy_ventas:.2f}</div></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
+                c6.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>UTILIDAD GENERADA</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
 
-                st.write("**Horarios y Asistencia**")
+                st.write("**Control de Asistencia (Horarios)**")
                 c1, c2, c3, c4_ast = st.columns(4)
-                c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingreso</div><div class='metric-value-small'>{h_in}</div></div>", unsafe_allow_html=True)
-                c2.markdown(f"<div class='metric-box'><div class='metric-title'>Salida</div><div class='metric-value-small'>{h_out}</div></div>", unsafe_allow_html=True)
+                c1.markdown(f"<div class='metric-box'><div class='metric-title'>Hora Ingreso</div><div class='metric-value-small'>{h_in}</div></div>", unsafe_allow_html=True)
+                c2.markdown(f"<div class='metric-box'><div class='metric-title'>Hora Salida</div><div class='metric-value-small'>{h_out}</div></div>", unsafe_allow_html=True)
                 c3.markdown(f"<div class='metric-box'><div class='metric-title'>Días Trabajados (Mes)</div><div class='metric-value-small metric-green'>{dias_asistidos} Días</div></div>", unsafe_allow_html=True)
-                c4_ast.markdown(f"<div class='metric-box' style='border:2px solid #ef4444;'><div class='metric-title'>Faltas (Mes)</div><div class='metric-value-small metric-red'>{dias_faltados} Días</div></div>", unsafe_allow_html=True)
+                c4_ast.markdown(f"<div class='metric-box' style='border:2px solid #ef4444;'><div class='metric-title'>Faltas (Acumuladas)</div><div class='metric-value-small metric-red'>{dias_faltados} Días</div></div>", unsafe_allow_html=True)
                 
-            except Exception as e: st.info("Evaluando datos...")
+            except Exception as e: st.info("Evaluando datos en segundo plano...")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 📊 MÓDULO 8: REPORTES Y CIERRE SÚPER BLINDADO
+# 📊 MÓDULO 8: REPORTES Y CIERRE (TESORERÍA)
 # ==========================================
-elif menu == "📊 REPORTES Y CIERRE":
+elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.user_perms or "reportes" in st.session_state.user_perms):
     st.markdown('<div class="main-header">Auditoría Financiera y Tesorería</div>', unsafe_allow_html=True)
     
     if st.session_state.ticket_cierre:
         tk = st.session_state.ticket_cierre
-        st.success("✅ Reporte Z Generado.")
+        st.success("✅ Reporte Z Generado Correctamente.")
         st.markdown(f"""
         <div class="ticket-termico">
             <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (FIN TURNO)</b></center>
@@ -966,18 +983,17 @@ elif menu == "📊 REPORTES Y CIERRE":
             {tk['alertas_stock']}
         </div>
         """, unsafe_allow_html=True)
-        if st.button("🧹 Iniciar Nuevo Turno", type="primary"):
+        if st.button("🧹 Iniciar Nuevo Turno Operativo", type="primary"):
             st.session_state.ticket_cierre = None
             st.rerun()
     else:
         t_rep1, t_rep2, t_rep3 = st.tabs(["📊 Balance de Turno Abierto", "📆 Historial Financiero Diario", "🧾 Historial de Tickets"])
         
-        # --- PESTAÑA 1: TURNO ACTUAL ---
         with t_rep1:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             try:
                 last_cierre = get_last_cierre_dt()
-                st.caption(f"Contabilizando movimientos desde: {last_cierre.strftime('%d/%m/%Y %H:%M')}")
+                st.caption(f"Contabilizando movimientos en tiempo real desde: {last_cierre.strftime('%d/%m/%Y %H:%M')}")
                 
                 cab = supabase.table("ventas_cabecera").select("*").gte("created_at", last_cierre.isoformat()).execute()
                 gst = supabase.table("gastos").select("monto").gte("fecha", last_cierre.isoformat()).execute()
@@ -993,7 +1009,7 @@ elif menu == "📊 REPORTES Y CIERRE":
                     v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                     tot_v = v_efe + v_dig
                     
-                    # ✅ REQ 7: MOTOR MATEMÁTICO 100% SEGURO PARA EL COSTO
+                    # 🛡️ MOTOR MATEMÁTICO ANTI S/.0.00
                     _, tot_costo, c_ven = procesar_cruces_seguros(df_c)
                 
                 if gst.data: tot_gst = sum(g['monto'] for g in gst.data)

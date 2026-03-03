@@ -9,10 +9,15 @@ import bcrypt
 import plotly.express as px
 import plotly.graph_objects as go
 import pytz
+import uuid # <-- NUEVA LIBRERÍA PARA BLINDAR LA BASE DE DATOS
 
 # ==========================================
 # 1. GESTIÓN HORARIA (UTC -> LIMA)
 # ==========================================
+os.environ['TZ'] = 'America/Lima'
+if hasattr(time, 'tzset'):
+    time.tzset()
+
 def get_now():
     return datetime.now(pytz.timezone('America/Lima'))
 
@@ -128,7 +133,6 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True).tz_convert('America/Lima')
 
-# LIMPIADOR DE IDs
 def clean_id(val):
     try:
         if pd.isna(val): return ""
@@ -137,7 +141,15 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS BASADO EN LÓGICA MERGE (ACTUALIZADO SEGÚN AUDITORÍA)
+# 🛡️ NUEVO ESCUDO: VALIDADOR DE UUID
+def is_valid_uuid(val):
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
+
+# 🔥 MOTOR DE COSTOS BLINDADO (SOLUCIÓN DEL ERROR 22P02)
 def obtener_costo_y_detalles(df_cab):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
@@ -146,17 +158,13 @@ def obtener_costo_y_detalles(df_cab):
         if 'id' in df_cab.columns:
             for x in df_cab['id'].tolist():
                 v = clean_id(x)
-                if v: valid_ids.add(v)
-        if 'ticket_numero' in df_cab.columns:
-            for x in df_cab['ticket_numero'].tolist():
-                v = clean_id(x)
-                if v: valid_ids.add(v)
+                if v and is_valid_uuid(v): # Solo permite pasar IDs reales
+                    valid_ids.add(v)
 
         valid_ids = list(valid_ids)
         if not valid_ids: 
             return pd.DataFrame(), 0.0, 0
 
-        # Filtro Lado-Servidor: Bypass del Truncamiento API
         res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", valid_ids).execute()
             
         if not res_det.data: 
@@ -225,7 +233,6 @@ def procesar_codigo_venta(code):
     except: st.error("Error de base de datos.")
     return False
 
-# 🧨 ALGORITMO DE RESET DE FÁBRICA EN BLOQUE (Optimizado)
 def execute_factory_reset():
     tables = [
         ("ventas_detalle", "id"), ("ticket_historial", "id"), ("movimientos_inventario", "id"),
@@ -237,7 +244,6 @@ def execute_factory_reset():
         try: supabase.table(t).delete().not_is_null(pk).execute()
         except: pass
     
-    # Protege al usuario admin
     try: supabase.table("usuarios").delete().neq("usuario", "admin").execute()
     except: pass
 
@@ -294,8 +300,8 @@ if st.session_state.logged_in and st.session_state.is_admin:
     st.sidebar.divider()
     with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)", expanded=False):
         st.error("Esto borrará TODA la información operativa para iniciar en limpio.")
-        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v20")
-        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v20"):
+        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v21")
+        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v21"):
             if confirm_text == "RESETEAR":
                 with st.spinner("Borrando base de datos con consultas Bulk..."):
                     execute_factory_reset()
@@ -570,11 +576,9 @@ elif menu == "🛒 VENTAS (POS)":
                                 try: supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": str(it['id']), "cantidad": it['cant'], "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']}).execute()
                                 except: pass 
                                 
-                                # ⚡ INVENTARIO ATÓMICO MEDIANTE RPC
                                 try:
                                     supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
-                                except Exception as e_rpc:
-                                    # Fallback por si no han corrido el código SQL en Supabase
+                                except Exception:
                                     try:
                                         stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
                                         if stk.data: supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
@@ -705,6 +709,7 @@ elif menu == "🤝 CLIENTES (CRM)":
 
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
+                
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
                 
                 st.divider()
@@ -835,16 +840,12 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                                 st.error("🛑 AUDITORÍA: Debes ingresar el motivo para alterar el stock manualmente.")
                             else:
                                 c_up = sel_p.split(" - ")[0]
-                                try:
-                                    if add_qty > 0: supabase.rpc("aumentar_stock", {"p_codigo": c_up, "p_cant": add_qty}).execute()
-                                    else: supabase.rpc("reducir_stock", {"p_codigo": c_up, "p_cant": abs(add_qty)}).execute()
-                                except:
-                                    c_stk = int(df[df['codigo_barras'] == c_up]['stock_actual'].iloc[0])
-                                    supabase.table("productos").update({"stock_actual": c_stk + add_qty}).eq("codigo_barras", c_up).execute()
-                                
+                                c_stk = int(df[df['codigo_barras'] == c_up]['stock_actual'].iloc[0])
+                                nuevo_stock = c_stk + add_qty
+                                supabase.table("productos").update({"stock_actual": nuevo_stock}).eq("codigo_barras", c_up).execute()
                                 tipo_mov = "INGRESO_MANUAL" if add_qty > 0 else "SALIDA_MANUAL"
                                 registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
-                                st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
+                                st.success(f"✅ Stock actualizado a {nuevo_stock} unidades."); time.sleep(1.5); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t2:
@@ -957,9 +958,7 @@ elif menu == "⚠️ MERMAS" and ("mermas" in st.session_state.user_perms or st.
                     m_mot = st.selectbox("Motivo Operativo", ["Roto al instalar", "Falla de Fábrica", "Robo/Extravío"])
                     if st.form_submit_button("⚠️ CONFIRMAR PÉRDIDA FINANCIERA"):
                         if p_merma['stock_actual'] >= m_cant:
-                            try: supabase.rpc("reducir_stock", {"p_codigo": m_cod, "p_cant": m_cant}).execute()
-                            except: supabase.table("productos").update({"stock_actual": p_merma['stock_actual'] - m_cant}).eq("codigo_barras", m_cod).execute()
-                            
+                            supabase.table("productos").update({"stock_actual": p_merma['stock_actual'] - m_cant}).eq("codigo_barras", m_cod).execute()
                             supabase.table("mermas").insert({"usuario_id": st.session_state.user_id, "producto_id": m_cod, "cantidad": m_cant, "motivo": m_mot, "perdida_monetaria": p_merma['costo_compra'] * m_cant}).execute()
                             registrar_kardex(m_cod, st.session_state.user_id, "SALIDA_MERMA", m_cant, m_mot)
                             st.success("✅ Baja documentada exitosamente."); time.sleep(1); st.rerun()

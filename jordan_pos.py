@@ -132,37 +132,50 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True).tz_convert('America/Lima')
 
-# 🔥 MOTOR COGS DEFINITIVO (Usando el método de unión directa en Supabase que usaste en tu versión antigua)
+# 🔥 MOTOR COGS - BÚSQUEDA PROTEGIDA CON TIPOS DE DATOS
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
     try:
-        # Extraemos los IDs reales (UUIDs) de las cabeceras generadas en el turno
-        venta_ids = df_cab['id'].astype(str).tolist()
+        raw_ids = []
+        if 'id' in df_cab.columns: raw_ids.extend(df_cab['id'].tolist())
+        if 'ticket_numero' in df_cab.columns: raw_ids.extend(df_cab['ticket_numero'].tolist())
+        
+        # Filtramos los IDs que son números puros (int) y los que son texto (str)
+        int_ids = [int(x) for x in raw_ids if str(x).isdigit()]
+        str_ids = [str(x) for x in raw_ids if not str(x).isdigit() and pd.notna(x) and x != ""]
         
         detalles_data = []
-        # Consultamos a Supabase por lotes de 50. ¡ESTA ES LA CLAVE QUE SACA EL COSTO REAL!
-        # Le pedimos que en la misma consulta una la tabla productos para traer costo y nombre.
-        for i in range(0, len(venta_ids), 50):
-            try:
-                res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal, productos(nombre, costo_compra)").in_("venta_id", venta_ids[i:i+50]).execute()
-                if hasattr(res, 'data') and res.data:
-                    detalles_data.extend(res.data)
-            except Exception as inner_e:
-                logging.warning(f"Fallback en FK: {inner_e}")
+        
+        # 1. Buscar usando números (Previene Error Postgres de Tipo)
+        if int_ids:
+            for i in range(0, len(int_ids), 50):
+                try:
+                    # EXTRAE COSTO Y NOMBRE DIRECTO CON RELACIÓN SQL
+                    res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal, productos(nombre, costo_compra)").in_("venta_id", int_ids[i:i+50]).execute()
+                    if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
+                except: pass
+        
+        # 2. Buscar usando Textos (Ticket manual)
+        if str_ids:
+            for i in range(0, len(str_ids), 50):
+                try:
+                    res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal, productos(nombre, costo_compra)").in_("venta_id", str_ids[i:i+50]).execute()
+                    if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
+                except: pass
                 
         if not detalles_data: 
             return pd.DataFrame(), 0.0, 0
 
         df_det = pd.DataFrame(detalles_data)
 
-        # Extraemos el costo y nombre del JSON anidado que nos devolvió Supabase
-        def extract_cost(prod_obj):
-            if isinstance(prod_obj, dict): return float(prod_obj.get('costo_compra') or 0.0)
+        # Mapea Costos extraidos de Supabase
+        def extract_cost(p):
+            if isinstance(p, dict): return float(p.get('costo_compra') or 0.0)
             return 0.0
 
-        def extract_name(prod_obj):
-            if isinstance(prod_obj, dict): return str(prod_obj.get('nombre', 'Desconocido'))
+        def extract_name(p):
+            if isinstance(p, dict): return str(p.get('nombre', 'Desconocido'))
             return "Desconocido"
 
         if 'productos' in df_det.columns:
@@ -172,16 +185,13 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
             df_det['costo_compra'] = 0.0
             df_det['nombre_prod'] = "Desconocido"
 
-        # Cálculos matemáticos finales por cada detalle vendido
         df_det['cantidad'] = pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0)
-        df_det['subtotal'] = pd.to_numeric(df_det['subtotal'], errors='coerce').fillna(0)
         df_det['costo_total_linea'] = df_det['cantidad'] * df_det['costo_compra']
 
         costo_total = float(df_det['costo_total_linea'].sum())
         cant_total = int(df_det['cantidad'].sum())
 
         return df_det, costo_total, cant_total
-
     except Exception as e:
         logging.error(f"Fallo en motor de costeo: {e}")
         return pd.DataFrame(), 0.0, 0
@@ -206,7 +216,7 @@ def procesar_codigo_venta(code):
                 return True
             else: st.error("❌ Sin stock disponible.")
         else: st.warning("⚠️ Producto no encontrado.")
-    except Exception as e: st.error("Error de base de datos.")
+    except Exception: st.error("Error de base de datos.")
     return False
 
 def execute_factory_reset():
@@ -275,8 +285,8 @@ if st.session_state.logged_in and st.session_state.is_admin:
     st.sidebar.divider()
     with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)", expanded=False):
         st.error("Esto borrará TODA la información operativa para iniciar en limpio.")
-        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v3")
-        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v3"):
+        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v31")
+        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v31"):
             if confirm_text == "RESETEAR":
                 with st.spinner("Borrando base de datos con consultas Bulk..."):
                     execute_factory_reset()
@@ -510,9 +520,8 @@ elif menu == "🛒 VENTAS (POS)":
                     if st.button("Guardar y Seleccionar"):
                         try:
                             supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
-                            st.success("Cliente guardado. Desmarca la casilla y búscalo en la lista."); time.sleep(2); st.rerun()
-                        except Exception as e:
-                            st.error(f"Fallo al guardar cliente.")
+                            st.success("Cliente guardado."); time.sleep(2); st.rerun()
+                        except Exception: st.error(f"Fallo al guardar cliente.")
 
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
@@ -541,19 +550,28 @@ elif menu == "🛒 VENTAS (POS)":
                             cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
                             if cli_id is not None: datos_insert["cliente_id"] = cli_id
                             
-                            # Insertamos y RECUPERAMOS EL ID REAL QUE GENERA SUPABASE
-                            res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
-                            v_id = res_insert.data[0]['id'] 
+                            try: res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
+                            except:
+                                if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
+                                res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
+
+                            v_id = t_num 
+                            if hasattr(res_insert, 'data') and res_insert.data: 
+                                v_id = res_insert.data[0].get('id')
                             
                             items_html = ""
                             for it in st.session_state.carrito:
-                                try: 
-                                    supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": str(it['id']), "cantidad": it['cant'], "precio_unitario": float(it['precio']), "subtotal": float(it['precio'] * it['cant'])}).execute()
+                                # 🔥 INSERCIÓN PROTEGIDA CON CONVERSIÓN DE TIPO
+                                try:
+                                    try: 
+                                        supabase.table("ventas_detalle").insert({"venta_id": int(v_id), "producto_id": str(it['id']), "cantidad": int(it['cant']), "precio_unitario": float(it['precio']), "subtotal": float(it['precio'] * it['cant'])}).execute()
+                                    except: 
+                                        supabase.table("ventas_detalle").insert({"venta_id": str(v_id), "producto_id": str(it['id']), "cantidad": int(it['cant']), "precio_unitario": float(it['precio']), "subtotal": float(it['precio'] * it['cant'])}).execute()
                                 except Exception as e_det: 
-                                    st.error(f"⚠️ Error BD en detalle.")
+                                    logging.error(f"Fallo Detalle: {e_det}")
                                 
                                 try: supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
-                                except Exception:
+                                except:
                                     try:
                                         stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
                                         if stk.data: supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
@@ -600,7 +618,7 @@ elif menu == "🛒 VENTAS (POS)":
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error en facturación. Asegúrate que llenaste los datos correctamente.")
+                        except Exception as e: st.error(f"🚨 Error en facturación: {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -624,7 +642,9 @@ elif menu == "🔄 DEVOLUCIONES":
                     v_row = v_cab.data[0]
                     v_id_search = str(v_row.get('id', v_row.get('ticket_numero'))).strip()
                     st.success(f"✅ Ticket Encontrado. Pago: {v_row['metodo_pago']}")
-                    v_det = supabase.table("ventas_detalle").select("*").eq("venta_id", v_id_search).execute()
+                    
+                    try: v_det = supabase.table("ventas_detalle").select("*").eq("venta_id", int(v_id_search)).execute()
+                    except: v_det = supabase.table("ventas_detalle").select("*").eq("venta_id", v_id_search).execute()
                     
                     if v_det.data:
                         vendedor_sel = st.selectbox("👤 Vendedor que autoriza:", ["..."] + list(vendedor_opciones.keys()))
@@ -650,7 +670,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                     st.session_state.iny_dev_cod = ""; st.success("✅ Devuelto."); time.sleep(1); st.rerun()
                                 else: st.error("Selecciona tu usuario.")
                 else: st.warning("Ticket no encontrado.")
-            except Exception as e: st.error(f"Error procesando búsqueda.")
+            except Exception: st.error(f"Error procesando búsqueda.")
             
     else: 
         col_d1, col_d2 = st.columns(2)
@@ -684,7 +704,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 registrar_kardex(p['codigo_barras'], usr_id, "INGRESO_DEVOLUCION", d_cant, m_dev)
                                 st.success("✅ Devuelto exitosamente."); time.sleep(1); st.rerun()
                             else: st.error("Falta motivo o usuario autorizador.")
-            except Exception as e: st.error(f"Fallo de red.")
+            except Exception: st.error(f"Fallo de red.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -720,9 +740,9 @@ elif menu == "🤝 CLIENTES (CRM)":
                             try:
                                 supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
                                 st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
-                            except Exception as e: st.error(f"Error al borrar cliente.")
+                            except Exception: st.error(f"Error al borrar cliente.")
             else: st.info("No hay clientes registrados en la Base de Datos.")
-        except Exception as e: st.info("La tabla de clientes aún no tiene datos.")
+        except Exception: st.info("La tabla de clientes aún no tiene datos.")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -742,7 +762,7 @@ elif menu == "🤝 CLIENTES (CRM)":
                             try:
                                 supabase.table("clientes").insert({"dni_ruc": doc, "nombre": nom, "telefono": tel}).execute()
                                 st.success("✅ Cliente guardado (Sin correo)."); time.sleep(1); st.rerun()
-                            except Exception as ex: st.error(f"Error: DNI ya existe.")
+                            except Exception: st.error(f"Error: DNI ya existe.")
                         else: st.error(f"Error guardando: DNI ya existe.")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -762,7 +782,7 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
                 try:
                     supabase.table("gastos").insert({"usuario_id": st.session_state.user_id, "tipo_gasto": tipo, "descripcion": desc, "monto": monto}).execute()
                     st.success("✅ Gasto registrado."); time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"Error registrando gasto.")
+                except Exception: st.error("Error registrando gasto.")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t2:
@@ -784,7 +804,7 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
                     st.markdown(f"<div style='text-align:right;'><h3 style='color:#ef4444;'>Total Egresos: S/. {df_g_dia['monto'].sum():.2f}</h3></div>", unsafe_allow_html=True)
                 else: st.info("No hay gastos registrados en la fecha seleccionada.")
             else: st.info("No hay gastos registrados.")
-        except Exception as e: st.error(f"Error procesando gastos.")
+        except Exception: st.error("Error procesando gastos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -848,9 +868,9 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                                         tipo_mov = "INGRESO_MANUAL" if add_qty > 0 else "SALIDA_MANUAL"
                                         registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
                                         st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
-                                    except Exception as db_err:
+                                    except Exception:
                                         st.error(f"Falla crítica: Base de datos denegó operación.")
-        except Exception as e: st.error(f"Error cargando inventario.")
+        except Exception: st.error(f"Error cargando inventario.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t2:
@@ -935,7 +955,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                         st.dataframe(res_alm, use_container_width=True)
                     else: st.info("No hay detalles de venta registrados para esta fecha.")
                 else: st.info("No hubo ventas en la fecha seleccionada.")
-        except Exception as e: st.error("Calculando rotación...")
+        except Exception: st.error("Calculando rotación...")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -1196,43 +1216,43 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
         tk = st.session_state.ticket_cierre
         st.success("✅ Reporte Z Generado Correctamente.")
         
-        # EL TICKET HTML SIN SANGRÍAS (Evita que las etiquetas salgan como texto)
+        # EL TICKET HTML TOTALMENTE PEGADO AL BORDE IZQUIERDO PARA EVITAR EL FORMATO DE CÓDIGO PLANO
         if es_gerencia:
             financiero_html = (
-                "<b>📉 INVERSIÓN Y UTILIDAD:</b><br>"
-                f"Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>"
-                f"Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>"
-                f"<b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>"
-                "--------------------------------<br>"
+"<b>📉 INVERSIÓN Y UTILIDAD:</b><br>"
+f"Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>"
+f"Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>"
+f"<b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>"
+"--------------------------------<br>"
             )
         else:
             financiero_html = (
-                "<b>📉 SALIDAS DE CAJA:</b><br>"
-                f"Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>"
-                f"Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>"
-                "--------------------------------<br>"
+"<b>📉 SALIDAS DE CAJA:</b><br>"
+f"Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>"
+f"Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>"
+"--------------------------------<br>"
             )
 
         ticket_cajero_html = (
-            "<div class='ticket-termico'>"
-            "<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>"
-            "--------------------------------<br>"
-            f"FECHA CIERRE: {tk['fecha']}<br>"
-            f"CAJERO RESP: {st.session_state.user_name}<br>"
-            "--------------------------------<br>"
-            f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>"
-            f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>"
-            f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>"
-            f"Volumen Venta: {tk['cant_vendida']} items.<br>"
-            "--------------------------------<br>"
-            f"{financiero_html}"
-            f"{tk.get('personal_html', '')}"
-            "<b>🏦 RENDICIÓN DE CAJA:</b><br>"
-            f"EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>"
-            f"PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>"
-            "--------------------------------<br>"
-            f"{tk.get('alertas_stock', '')}"
-            "</div>"
+"<div class='ticket-termico'>"
+"<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>"
+"--------------------------------<br>"
+f"FECHA CIERRE: {tk['fecha']}<br>"
+f"CAJERO RESP: {st.session_state.user_name}<br>"
+"--------------------------------<br>"
+f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>"
+f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>"
+f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>"
+f"Volumen Venta: {tk['cant_vendida']} items.<br>"
+"--------------------------------<br>"
+f"{financiero_html}"
+f"{tk.get('personal_html', '')}"
+"<b>🏦 RENDICIÓN DE CAJA:</b><br>"
+f"EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>"
+f"PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>"
+"--------------------------------<br>"
+f"{tk.get('alertas_stock', '')}"
+"</div>"
         )
 
         st.markdown(ticket_cajero_html, unsafe_allow_html=True)
@@ -1259,16 +1279,37 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 
                 cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", lc_iso).execute()
                 
-                try: gst_all = supabase.table("gastos").select("*").gte("created_at", lc_iso).execute()
-                except: gst_all = supabase.table("gastos").select("*").gte("fecha", lc_iso).execute()
+                try: gst_res = supabase.table("gastos").select("*").order("id", desc=True).limit(500).execute()
+                except: gst_res = None
+                if gst_res and gst_res.data:
+                    df_g_temp = pd.DataFrame(gst_res.data)
+                    col_t = 'created_at' if 'created_at' in df_g_temp.columns else 'fecha'
+                    df_g_temp['ts'] = pd.to_datetime(df_g_temp[col_t], utc=True).dt.tz_convert('America/Lima')
+                    df_g_turno = df_g_temp[df_g_temp['ts'] >= lc]
+                    tot_gst = df_g_turno['monto'].sum()
+                else: tot_gst = 0.0
                 
-                try: dev_all = supabase.table("devoluciones").select("*").gte("created_at", lc_iso).execute()
-                except: dev_all = supabase.table("devoluciones").select("*").gte("fecha", lc_iso).execute()
+                try: dev_res = supabase.table("devoluciones").select("*").order("id", desc=True).limit(500).execute()
+                except: dev_res = None
+                if dev_res and dev_res.data:
+                    df_d_temp = pd.DataFrame(dev_res.data)
+                    col_t = 'created_at' if 'created_at' in df_d_temp.columns else 'fecha'
+                    df_d_temp['ts'] = pd.to_datetime(df_d_temp[col_t], utc=True).dt.tz_convert('America/Lima')
+                    df_d_turno = df_d_temp[df_d_temp['ts'] >= lc]
+                    tot_dev = df_d_turno['dinero_devuelto'].sum()
+                else: tot_dev = 0.0
                 
-                try: mer_all = supabase.table("mermas").select("*").gte("created_at", lc_iso).execute()
-                except: mer_all = supabase.table("mermas").select("*").gte("fecha", lc_iso).execute()
+                try: mer_res = supabase.table("mermas").select("*").order("id", desc=True).limit(500).execute()
+                except: mer_res = None
+                if mer_res and mer_res.data:
+                    df_m_temp = pd.DataFrame(mer_res.data)
+                    col_t = 'created_at' if 'created_at' in df_m_temp.columns else 'fecha'
+                    df_m_temp['ts'] = pd.to_datetime(df_m_temp[col_t], utc=True).dt.tz_convert('America/Lima')
+                    df_m_turno = df_m_temp[df_m_temp['ts'] >= lc]
+                    tot_merma = df_m_turno['perdida_monetaria'].sum()
+                else: tot_merma = 0.0
                 
-                tot_v, v_efe, v_dig, tot_costo, tot_gst, tot_dev, tot_merma = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                tot_v, v_efe, v_dig, tot_costo = 0.0, 0.0, 0.0, 0.0
                 c_ven = 0
                 
                 if cab_all.data:
@@ -1277,13 +1318,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         v_efe = df_c[df_c['metodo_pago'] == 'Efectivo']['total_venta'].sum()
                         v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                         tot_v = v_efe + v_dig
-                        
-                        # AQUÍ SE EJECUTA EL MOTOR REPARADO
                         _df_costo_det, tot_costo, c_ven = obtener_costo_y_detalles_optimizado(df_c, supabase)
-                
-                if gst_all.data: tot_gst = pd.DataFrame(gst_all.data)['monto'].sum()
-                if dev_all.data: tot_dev = pd.DataFrame(dev_all.data)['dinero_devuelto'].sum()
-                if mer_all.data: tot_merma = pd.DataFrame(mer_all.data)['perdida_monetaria'].sum()
                 
                 ganancia_bruta = tot_v - tot_costo
                 ganancia_neta = ganancia_bruta - tot_gst - tot_dev - tot_merma
@@ -1366,34 +1401,36 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 }
                                 
                                 tk_z_num = f"Z-{int(time.time())}"
+                                
                                 tk_admin_html = (
-                                    "<div class='ticket-termico'>"
-                                    "<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>"
-                                    "--------------------------------<br>"
-                                    f"FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>"
-                                    f"CAJERO: {st.session_state.user_name}<br>"
-                                    "--------------------------------<br>"
-                                    f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>"
-                                    f"- Efectivo: S/. {v_efe:.2f}<br>"
-                                    f"- Digital: S/. {v_dig:.2f}<br>"
-                                    f"Volumen: {c_ven} items.<br>"
-                                    "--------------------------------<br>"
-                                    "<b>📉 INVERSIÓN Y COSTOS:</b><br>"
-                                    f"Costo Mercadería: S/. {tot_costo:.2f}<br>"
-                                    f"Gastos Caja: S/. {tot_gst:.2f}<br>"
-                                    f"Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>"
-                                    "--------------------------------<br>"
-                                    "<b>📊 RENDIMIENTO NETO:</b><br>"
-                                    f"Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>"
-                                    f"<b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>"
-                                    "--------------------------------<br>"
-                                    f"{personal_html}"
-                                    "<b>🏦 RENDICIÓN DE CAJA:</b><br>"
-                                    f"EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>"
-                                    f"PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>"
-                                    "--------------------------------<br>"
-                                    "</div>"
+"<div class='ticket-termico'>"
+"<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>"
+"--------------------------------<br>"
+f"FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>"
+f"CAJERO: {st.session_state.user_name}<br>"
+"--------------------------------<br>"
+f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>"
+f"- Efectivo: S/. {v_efe:.2f}<br>"
+f"- Digital: S/. {v_dig:.2f}<br>"
+f"Volumen: {c_ven} items.<br>"
+"--------------------------------<br>"
+"<b>📉 INVERSIÓN Y COSTOS:</b><br>"
+f"Costo Mercadería: S/. {tot_costo:.2f}<br>"
+f"Gastos Caja: S/. {tot_gst:.2f}<br>"
+f"Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>"
+"--------------------------------<br>"
+"<b>📊 RENDIMIENTO NETO:</b><br>"
+f"Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>"
+f"<b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>"
+"--------------------------------<br>"
+f"{personal_html}"
+"<b>🏦 RENDICIÓN DE CAJA:</b><br>"
+f"EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>"
+f"PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>"
+"--------------------------------<br>"
+"</div>"
                                 )
+                                
                                 try: supabase.table("ticket_historial").insert({"ticket_numero": tk_z_num, "usuario_id": st.session_state.user_id, "html_payload": tk_admin_html}).execute()
                                 except: pass
                                 

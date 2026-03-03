@@ -133,7 +133,7 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z").tz_convert('America/Lima')
 
-# 🧹 LIMPIADOR DE IDs: Transforma 123.0 en 123
+# 🧹 LIMPIADOR DE IDs MEJORADO
 def clean_id(val):
     try:
         if pd.isna(val): return ""
@@ -142,53 +142,63 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS BASADO EN LÓGICA MERGE
+# 🔥 MOTOR DE COSTOS BASADO EN LÓGICA MERGE (ACTUALIZADO V19)
 def obtener_costo_y_detalles(df_cab):
     if df_cab is None or df_cab.empty: return pd.DataFrame(), 0.0, 0
     try:
-        valid_ids = []
-        if 'id' in df_cab.columns: valid_ids.extend([clean_id(x) for x in df_cab['id'].tolist()])
-        if 'ticket_numero' in df_cab.columns: valid_ids.extend([clean_id(x) for x in df_cab['ticket_numero'].tolist()])
-        
-        valid_ids = [x for x in list(set(valid_ids)) if x != ""]
+        # Recolectar TODOS los posibles IDs: UUID y ticket_numero
+        valid_ids = set()
+        if 'id' in df_cab.columns:
+            for x in df_cab['id'].tolist():
+                v = clean_id(x)
+                if v: valid_ids.add(v)
+        if 'ticket_numero' in df_cab.columns:
+            for x in df_cab['ticket_numero'].tolist():
+                v = clean_id(x)
+                if v: valid_ids.add(v)
+
+        valid_ids = list(valid_ids)
         if not valid_ids: return pd.DataFrame(), 0.0, 0
 
-        res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad").execute()
+        # ✅ CORREGIDO: incluir subtotal en el select
+        res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").execute()
         if not res_det.data: return pd.DataFrame(), 0.0, 0
-        
+
         df_det = pd.DataFrame(res_det.data)
         df_det['venta_id_str'] = df_det['venta_id'].apply(clean_id)
-        
+
         df_filt = df_det[df_det['venta_id_str'].isin(valid_ids)].copy()
         if df_filt.empty: return pd.DataFrame(), 0.0, 0
-        
+
         res_prod = supabase.table("productos").select("codigo_barras, nombre, costo_compra").execute()
-        if not res_prod.data: return df_filt, 0.0, int(df_filt['cantidad'].sum())
-        
+        if not res_prod.data: return df_filt, 0.0, int(pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0).sum())
+
         df_prod = pd.DataFrame(res_prod.data)
-        
-        df_filt['producto_id_clean'] = df_filt['producto_id'].apply(clean_id)
-        df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].apply(clean_id)
-        
+
+        # ✅ CORREGIDO: limpiar IDs en ambos lados antes del merge
+        df_filt['producto_id_clean'] = df_filt['producto_id'].apply(lambda x: str(x).strip() if pd.notna(x) else "")
+        df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].apply(lambda x: str(x).strip() if pd.notna(x) else "")
+
         df_merge = df_filt.merge(
-            df_prod,
+            df_prod[['codigo_barras_clean', 'nombre', 'costo_compra']],
             left_on="producto_id_clean",
             right_on="codigo_barras_clean",
             how="left"
         )
-        
+
         df_merge['cantidad'] = pd.to_numeric(df_merge['cantidad'], errors='coerce').fillna(0)
         df_merge['costo_compra'] = pd.to_numeric(df_merge['costo_compra'], errors='coerce').fillna(0)
-        
+        df_merge['subtotal'] = pd.to_numeric(df_merge['subtotal'], errors='coerce').fillna(0)
+
         df_merge['costo_total_linea'] = df_merge['cantidad'] * df_merge['costo_compra']
-        
         df_merge['costo_unit'] = df_merge['costo_compra']
         df_merge['nombre_prod'] = df_merge['nombre'].fillna('Producto Desconocido')
-        
+
         costo_total = float(df_merge['costo_total_linea'].sum())
         cant_total = int(df_merge['cantidad'].sum())
-        
+
         return df_merge, costo_total, cant_total
+
     except Exception as e:
         return pd.DataFrame(), 0.0, 0
 
@@ -359,7 +369,7 @@ if menu == "📈 DASHBOARD GENERAL":
             c2.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Ayer</div><div class='metric-value metric-blue'>S/. {v_ayer:.2f}</div></div>", unsafe_allow_html=True)
             
             if es_gerencia:
-                _, util_hoy_costo, _ = obtener_costo_y_detalles(df_hoy)
+                _df_dash_det, util_hoy_costo, _ = obtener_costo_y_detalles(df_hoy)
                 c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>S/. {v_hoy - util_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
             else:
                 c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>🔒 Oculto</div></div>", unsafe_allow_html=True)
@@ -390,7 +400,7 @@ if menu == "📈 DASHBOARD GENERAL":
                     df_dia = df_7d[df_7d['fecha'] == d]
                     v_tot = df_dia['total_venta'].sum()
                     if not df_dia.empty:
-                        _, costo_dia, _ = obtener_costo_y_detalles(df_dia)
+                        _df_7d_det, costo_dia, _ = obtener_costo_y_detalles(df_dia)
                     else:
                         costo_dia = 0.0
                     util_dia = v_tot - costo_dia
@@ -556,7 +566,10 @@ elif menu == "🛒 VENTAS (POS)":
                                 res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
 
                             v_id = t_num 
-                            if hasattr(res_insert, 'data') and res_insert.data: v_id = res_insert.data[0].get('id', t_num)
+                            if hasattr(res_insert, 'data') and res_insert.data: 
+                                row_v = res_insert.data[0]
+                                # ✅ CORREGIDO: guardar el UUID real si existe, sino usar ticket_numero
+                                v_id = str(row_v.get('id', t_num)).strip()
                             
                             items_html = ""
                             for it in st.session_state.carrito:
@@ -606,7 +619,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", search_dev.upper()).execute()
                 if v_cab.data:
                     v_row = v_cab.data[0]
-                    v_id_search = v_row.get('id', v_row.get('ticket_numero'))
+                    v_id_search = str(v_row.get('id', v_row.get('ticket_numero'))).strip()
                     st.success(f"✅ Ticket Encontrado. Pago: {v_row['metodo_pago']}")
                     v_det = supabase.table("ventas_detalle").select("*").eq("venta_id", v_id_search).execute()
                     
@@ -686,7 +699,6 @@ elif menu == "🤝 CLIENTES (CRM)":
 
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
-                
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
                 
                 st.divider()
@@ -779,7 +791,6 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
             df['Categoría'] = df['categorias'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
             df['Marca'] = df['marcas'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
             
-            # Formateo estricto para evitar ceros masivos
             df['precio_lista'] = pd.to_numeric(df['precio_lista'], errors='coerce').fillna(0)
             df['costo_compra'] = pd.to_numeric(df['costo_compra'], errors='coerce').fillna(0)
 
@@ -1116,7 +1127,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     
                     if not df_cv_dia.empty:
                         v_hoy_ventas = df_cv_dia['total_venta'].sum()
-                        _, v_hoy_costo, _ = obtener_costo_y_detalles(df_cv_dia)
+                        _df_rrhh_det, v_hoy_costo, _ = obtener_costo_y_detalles(df_cv_dia)
                         v_hoy_utilidad = v_hoy_ventas - v_hoy_costo
 
                 st.write("**Desempeño Financiero (Productividad)**")
@@ -1209,7 +1220,9 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         v_efe = df_c[df_c['metodo_pago'] == 'Efectivo']['total_venta'].sum()
                         v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                         tot_v = v_efe + v_dig
-                        _, tot_costo, c_ven = obtener_costo_y_detalles(df_c)
+                        
+                        # ✅ CORREGIDO: Capturamos el DataFrame para asegurar el merge
+                        df_costo_det, tot_costo, c_ven = obtener_costo_y_detalles(df_c)
                 
                 if gst_all.data: 
                     df_g = pd.DataFrame(gst_all.data)
@@ -1333,7 +1346,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                             r_v_efe = df_c_dia[df_c_dia['metodo_pago'] == 'Efectivo']['total_venta'].sum()
                             r_v_dig = df_c_dia[df_c_dia['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                             r_v_tot = r_v_efe + r_v_dig
-                            _, r_costo, _ = obtener_costo_y_detalles(df_c_dia)
+                            _df_hist_det, r_costo, _ = obtener_costo_y_detalles(df_c_dia)
 
                     if gst_all.data:
                         df_g_all = pd.DataFrame(gst_all.data)
@@ -1370,7 +1383,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
                 st.write("Directorio de facturas normales emitidas a clientes.")
                 try:
-                    tks = supabase.table("ticket_historial").select("*").ilike("ticket_numero", "AJ-%").order("fecha", desc=True).limit(50).execute()
+                    tks = supabase.table("ticket_historial").select("ticket_numero, fecha, html_payload").ilike("ticket_numero", "AJ-%").order("fecha", desc=True).limit(50).execute()
                     if tks.data:
                         df_tks = pd.DataFrame(tks.data)
                         df_tks['fecha_format'] = pd.to_datetime(df_tks['fecha'], utc=True).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %I:%M %p')
@@ -1388,7 +1401,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 st.markdown('<div class="css-card">', unsafe_allow_html=True)
                 st.write("Directorio de Reportes Z Generados (Reimpresión con detalle financiero)")
                 try:
-                    tks_z = supabase.table("ticket_historial").select("*").ilike("ticket_numero", "Z-%").order("fecha", desc=True).limit(20).execute()
+                    tks_z = supabase.table("ticket_historial").select("ticket_numero, fecha, html_payload").ilike("ticket_numero", "Z-%").order("fecha", desc=True).limit(20).execute()
                     if tks_z.data:
                         df_tks_z = pd.DataFrame(tks_z.data)
                         df_tks_z['fecha_format'] = pd.to_datetime(df_tks_z['fecha'], utc=True).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %I:%M %p')

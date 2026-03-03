@@ -50,7 +50,7 @@ def verify_password(input_password, stored_password):
     return input_password == stored_password
 
 # ==========================================
-# 3. DISEÑO VISUAL UX/UI PREMIUM
+# 3. DISEÑO VISUAL UX/UI PREMIUM (NUEVOS BOTONES)
 # ==========================================
 st.markdown("""
     <style>
@@ -59,6 +59,7 @@ st.markdown("""
     .main-header { font-size: 26px; font-weight: 800; color: #1e293b; padding: 10px 0px 20px 0px; border-bottom: 2px solid #e2e8f0; margin-bottom: 25px;}
     .css-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin-bottom: 15px; }
     
+    /* ESTÉTICA DE TARJETAS (METRICAS) */
     .metric-box { background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; transition: all 0.2s ease;}
     .metric-box:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.1); transform: translateY(-2px); }
     .metric-title { font-size: 13px; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;}
@@ -71,10 +72,60 @@ st.markdown("""
     .metric-blue { color: #2563eb; }
     .metric-purple { color: #8b5cf6; }
     
+    /* 🚀 NUEVO: DISEÑO DE PESTAÑAS SUPERIORES COMO BOTONES */
+    button[data-baseweb="tab"] {
+        background-color: #f1f5f9 !important;
+        border-radius: 8px 8px 0px 0px !important;
+        border: 1px solid #e2e8f0 !important;
+        border-bottom: none !important;
+        padding: 10px 20px !important;
+        margin-right: 5px !important;
+        font-weight: 700 !important;
+        color: #475569 !important;
+        transition: all 0.3s ease !important;
+    }
+    button[data-baseweb="tab"]:hover {
+        background-color: #e2e8f0 !important;
+        color: #1e293b !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #2563eb !important;
+        color: white !important;
+        border-color: #2563eb !important;
+        box-shadow: 0px -3px 5px rgba(37, 99, 235, 0.2) !important;
+    }
+    
+    /* 🚀 NUEVO: DISEÑO DEL MENÚ LATERAL COMO BOTONES */
+    div[role="radiogroup"] > label {
+        background-color: white;
+        padding: 12px 15px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        border: 1px solid #e2e8f0;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    div[role="radiogroup"] > label:hover {
+        background-color: #f8fafc;
+        border-color: #cbd5e1;
+        transform: translateX(4px);
+    }
+    div[role="radiogroup"] > label[data-checked="true"] {
+        background-color: #2563eb !important;
+        border-color: #2563eb !important;
+        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.3);
+        transform: translateX(4px);
+    }
+    div[role="radiogroup"] > label[data-checked="true"] p {
+        color: white !important;
+        font-weight: 800 !important;
+    }
+    
+    /* Ticket y Botones Base */
     .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #cbd5e1; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2; font-size: 13px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);}
     .linea-corte { text-align: center; margin: 25px 0; border-bottom: 2px dashed #94a3b8; color: #64748b; font-size: 12px; font-weight: bold;}
     .linea-corte span { background: var(--bg-color); padding: 0 10px; }
-    .stButton>button { border-radius: 6px; font-weight: 600; transition: all 0.2s;}
     .btn-checkout>button { background-color: #2563eb; color: white; height: 3.5em; font-size: 16px; border: none; border-radius: 8px;}
     .btn-checkout>button:hover { background-color: #1d4ed8; color: white;}
     </style>
@@ -177,9 +228,8 @@ def procesar_codigo_venta(code):
     except: st.error("Error de base de datos.")
     return False
 
-# 🧨 ALGORITMO DE RESET DE FÁBRICA (ZONA DE PELIGRO)
+# 🧨 ALGORITMO DE RESET DE FÁBRICA REPARADO
 def execute_factory_reset():
-    # Orden específico para no romper las llaves foráneas
     tables = [
         ("ventas_detalle", "id"), ("ticket_historial", "id"), ("movimientos_inventario", "id"),
         ("devoluciones", "id"), ("mermas", "id"), ("gastos", "id"), ("ventas_cabecera", "id"),
@@ -197,7 +247,6 @@ def execute_factory_reset():
                 all_res = supabase.table(t).select(pk, "usuario" if t=="usuarios" else pk).execute()
                 if all_res.data:
                     for r in all_res.data:
-                        # PROTEGER AL ADMIN
                         if t == "usuarios" and r.get("usuario") == "admin": continue
                         supabase.table(t).delete().eq(pk, r[pk]).execute()
         except: pass
@@ -251,17 +300,18 @@ else:
         st.session_state.is_admin = False
         st.rerun()
 
-# ⚠️ ZONA DE PELIGRO (SOLO ADMIN)
+# ⚠️ ZONA DE PELIGRO (SOLO ADMIN) - ERROR DE DUPLICADO CORREGIDO AQUI
 if st.session_state.logged_in and st.session_state.is_admin:
     st.sidebar.divider()
-    with st.sidebar.expander("⚠️ ZONA DE PELIGRO (RESET)", expanded=False):
-        st.warning("Esta acción borrará TODA la base de datos (Ventas, Inventario, Clientes) dejando el sistema en blanco. Las pestañas no se borrarán.")
-        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:")
-        if st.button("🔥 FORMATEAR SISTEMA", type="primary"):
+    with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)", expanded=False):
+        st.error("Esto borrará TODA la información operativa para iniciar en limpio.")
+        # Agregamos llaves únicas (keys) para que Streamlit no confunda este input con otros
+        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_db_admin")
+        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_db_admin"):
             if confirm_text == "RESETEAR":
-                with st.spinner("Borrando historial... Esto puede tardar 20 segundos..."):
+                with st.spinner("Borrando base de datos..."):
                     execute_factory_reset()
-                st.success("✅ Sistema formateado correctamente. Actualiza la página.")
+                st.success("✅ Sistema reseteado a cero. Actualiza la página.")
                 time.sleep(2)
                 st.rerun()
             else:
@@ -336,7 +386,6 @@ if menu == "📈 DASHBOARD GENERAL":
             if p_db.data:
                 df_p = pd.DataFrame(p_db.data)
                 df_criticos = df_p[df_p['stock_actual'] <= 20].sort_values(by='stock_actual')
-                
                 if not df_criticos.empty:
                     st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos. Requieren reabastecimiento.")
                     with st.expander("Ver lista de productos a comprar"):
@@ -345,7 +394,6 @@ if menu == "📈 DASHBOARD GENERAL":
 
             st.divider()
             st.write("#### 📈 Evolución Comercial (Últimos 7 Días)")
-            
             fechas_7d = [hoy - timedelta(days=i) for i in range(6, -1, -1)]
             chart_data = []
             df_7d = df_v[df_v['fecha'] >= (hoy - timedelta(days=6))]
@@ -366,19 +414,14 @@ if menu == "📈 DASHBOARD GENERAL":
                 })
                 
             df_chart = pd.DataFrame(chart_data)
-            
             fig_combo = go.Figure()
             fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Ventas Brutas', marker_color='#2563eb', opacity=0.85))
             fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Utilidad Líquida'], name='Utilidad Líquida', marker_color='#10b981', opacity=0.85))
             fig_combo.add_trace(go.Scatter(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Tendencia', mode='lines+markers', line=dict(color='#f59e0b', width=3), marker=dict(size=8, color='#f59e0b')))
             
             fig_combo.update_layout(
-                barmode='group', 
-                xaxis_type='category',
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(l=0, r=0, t=30, b=0),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)'
+                barmode='group', xaxis_type='category', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
             )
             st.plotly_chart(fig_combo, use_container_width=True)
 
@@ -456,9 +499,6 @@ elif menu == "🛒 VENTAS (POS)":
 
             st.markdown(f"<div style='text-align:right; margin-top:15px;'><h1 style='color:#2563eb; font-size:45px; margin-bottom:0;'>TOTAL: S/. {total_venta:.2f}</h1></div>", unsafe_allow_html=True)
             
-            if st.session_state.logged_in and ("reportes" in st.session_state.user_perms or st.session_state.is_admin):
-                st.caption(f"Ganancia Bruta estimada: S/. {total_venta - costo_total:.2f}")
-
             with st.expander("💸 PAGO Y FACTURACIÓN", expanded=True):
                 lista_vendedores = get_lista_usuarios()
                 vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
@@ -477,25 +517,6 @@ elif menu == "🛒 VENTAS (POS)":
                 
                 cliente_sel = st.selectbox("Cliente (Opcional):", opciones_clientes)
                 
-                crear_cli = st.checkbox("➕ Registrar Nuevo Cliente ahora")
-                if crear_cli:
-                    st.info("El cliente se guardará para futuras ventas.")
-                    n_doc = st.text_input("DNI/RUC")
-                    n_nom = st.text_input("Nombre Completo")
-                    n_tel = st.text_input("Teléfono / WhatsApp")
-                    n_mail = st.text_input("Correo Electrónico (Marketing)")
-                    if st.button("Guardar y Seleccionar"):
-                        try:
-                            supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
-                            st.success("Cliente guardado."); time.sleep(2); st.rerun()
-                        except Exception as e:
-                            if "correo" in str(e): 
-                                try:
-                                    supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel}).execute()
-                                    st.success("Cliente guardado (Sin correo)."); time.sleep(2); st.rerun()
-                                except: st.error("El DNI/RUC ya existe.")
-                            else: st.error("El DNI/RUC ya existe.")
-
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
                 
@@ -545,7 +566,6 @@ elif menu == "🛒 VENTAS (POS)":
                                 items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
                             
                             fecha_tk = get_now().strftime('%d/%m/%Y %I:%M %p')
-                            
                             nom_cliente = cliente_sel.split(' - ')[1] if (cli_id and ' - ' in cliente_sel) else 'General'
                             
                             c_base = f"--------------------------------<br>TICKET: {t_num}<br>FECHA: {fecha_tk}<br>CAJERO: {vendedor_seleccionado}<br>CLIENTE: {nom_cliente}<br>--------------------------------<br>{items_html}--------------------------------<br><b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>MÉTODO: {pago}<br>"
@@ -652,7 +672,6 @@ elif menu == "🤝 CLIENTES (CRM)":
         try:
             cls_df = load_data("clientes")
             if not cls_df.empty: 
-                # ESCUDO PARA COLUMNAS DINÁMICAS
                 cols_disponibles = cls_df.columns.tolist()
                 cols_a_mostrar = ['dni_ruc', 'nombre']
                 if 'telefono' in cols_disponibles: cols_a_mostrar.append('telefono')
@@ -661,18 +680,8 @@ elif menu == "🤝 CLIENTES (CRM)":
 
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
-                
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
-                
-                st.divider()
-                st.write("#### 🗑️ Eliminar Cliente")
-                cli_a_borrar = st.selectbox("Selecciona cliente a eliminar:", ["..."] + cls_df['nombre'].tolist())
-                if st.button("🗑️ Confirmar Eliminación Permanente", type="primary"):
-                    if cli_a_borrar != "...":
-                        dni_to_del = cls_df[cls_df['nombre'] == cli_a_borrar]['dni_ruc'].iloc[0]
-                        supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
-                        st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
-            else: st.info("No hay clientes registrados en la Base de Datos.")
+            else: st.info("No hay clientes registrados.")
         except Exception as e: st.error(f"Error procesando clientes: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -920,7 +929,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
         if len(lista) > 2: return f"Varios ({len(lista)})"
         return ", ".join(lista)
         
-    t_u1, t_u2, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla Activa", "➕ Nuevo Empleado", "🔑 Reset Clave", "⚙️ Editar Permisos", "🗑️ Inhabilitar / Eliminar", "📊 Auditoría de Empleado"])
+    t_u1, t_u2, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla Activa", "➕ Nuevo Empleado", "🔑 Reset Clave", "⚙️ Editar Permisos", "🗑️ Inhabilitar", "📊 Auditoría de Empleado"])
     
     usrs_db = supabase.table("usuarios").select("*").execute()
     df_u, df_activos, df_inactivos = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -991,20 +1000,9 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
             if not df_activos.empty:
                 v_b = df_activos[df_activos['usuario'] != 'admin']['usuario'].tolist()
                 if v_b:
-                    u_del = st.selectbox("Gestionar Usuario:", v_b)
-                    
-                    if st.button("🗑️ INHABILITAR (Mantener Historial)"):
-                        supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute()
-                        st.rerun()
-                        
-                    st.divider()
-                    if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
-                        try:
-                            supabase.table("usuarios").delete().eq("usuario", u_del).execute()
-                            st.success("✅ Usuario eliminado de la base de datos.")
-                            time.sleep(1); st.rerun()
-                        except Exception as e:
-                            st.error("⚠️ No se puede eliminar porque este usuario ya tiene ventas o asistencias registradas. Por favor, inhabilítalo en su lugar para no romper el historial.")
+                    u_del = st.selectbox("Suspender Acceso (Despido/Falta):", v_b)
+                    if st.button("🗑️ INHABILITAR USUARIO"):
+                        supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute(); st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -1290,21 +1288,3 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         st.markdown(html_raw.replace("<script>window.onload=function(){window.print();}</script>", ""), unsafe_allow_html=True)
             except: pass
             st.markdown('</div>', unsafe_allow_html=True)
-
-# ==========================================
-# ⚠️ ZONA DE RESET (ADMINISTRADOR)
-# ==========================================
-if st.session_state.logged_in and st.session_state.is_admin:
-    st.sidebar.divider()
-    with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)"):
-        st.error("Esto borrará TODA la información operativa (Ventas, Productos, Clientes, Gastos) para iniciar en limpio.")
-        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:")
-        if st.button("🔥 FORMATEAR SISTEMA", type="primary"):
-            if confirm_text == "RESETEAR":
-                with st.spinner("Borrando base de datos... Por favor espera unos segundos..."):
-                    execute_factory_reset()
-                st.success("✅ Sistema reseteado a cero con éxito. Actualiza la página.")
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.error("Palabra de seguridad incorrecta.")

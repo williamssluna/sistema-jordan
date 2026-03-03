@@ -97,7 +97,7 @@ st.markdown("""
 components.html("""<script>const inputs = window.parent.document.querySelectorAll('input[type="text"]'); if(inputs.length > 0) { inputs[0].focus(); }</script>""", height=0)
 
 # ==========================================
-# 4. FUNCIONES MAESTRAS Y MOTOR MATEMÁTICO 
+# 4. MOTOR MATEMÁTICO ANTI-ERRORES (S/. 0.00 FIX)
 # ==========================================
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [], 'is_admin': False,
@@ -108,6 +108,10 @@ for key, value in keys_to_init.items():
 
 @st.cache_data(ttl=300)
 def load_data_cached(table):
+    try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
+    except: return pd.DataFrame()
+
+def load_data(table):
     try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
     except: return pd.DataFrame()
 
@@ -129,31 +133,36 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z").tz_convert('America/Lima')
 
+# LIMPIADOR DE IDs: Transforma 123.0 en 123 para evitar desconexiones
+def clean_id(val):
+    try:
+        if pd.isna(val): return ""
+        v_str = str(val)
+        if v_str.endswith(".0"): return v_str[:-2]
+        return v_str
+    except: return str(val)
+
+# MOTOR DE COSTOS BLINDADO
 def obtener_costo_y_detalles(df_cab):
     if df_cab is None or df_cab.empty: return pd.DataFrame(), 0.0, 0
     try:
         valid_ids = []
-        if 'id' in df_cab.columns: valid_ids.extend(df_cab['id'].dropna().astype(str).tolist())
-        if 'ticket_numero' in df_cab.columns: valid_ids.extend(df_cab['ticket_numero'].dropna().astype(str).tolist())
-        valid_ids = list(set(valid_ids))
+        if 'id' in df_cab.columns: valid_ids.extend([clean_id(x) for x in df_cab['id'].tolist()])
+        if 'ticket_numero' in df_cab.columns: valid_ids.extend([clean_id(x) for x in df_cab['ticket_numero'].tolist()])
+        
+        valid_ids = [x for x in list(set(valid_ids)) if x != ""]
         if not valid_ids: return pd.DataFrame(), 0.0, 0
 
-        det_data = []
-        for i in range(0, len(valid_ids), 100):
-            chunk = valid_ids[i:i+100]
-            try:
-                res = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", chunk).execute()
-                if res.data: det_data.extend(res.data)
-            except:
-                int_chunk = [int(x) for x in chunk if x.isdigit()]
-                if int_chunk:
-                    try:
-                        res = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", int_chunk).execute()
-                        if res.data: det_data.extend(res.data)
-                    except: pass
-            
-        if not det_data: return pd.DataFrame(), 0.0, 0
-        df_det = pd.DataFrame(det_data)
+        # Descargar detalles
+        res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").order("id", desc=True).limit(15000).execute()
+        if not res_det.data: return pd.DataFrame(), 0.0, 0
+        
+        df_det = pd.DataFrame(res_det.data)
+        df_det['venta_id_str'] = df_det['venta_id'].apply(clean_id) # Limpia los IDs de la base de datos
+        
+        # Filtro milimétrico en memoria
+        df_filt = df_det[df_det['venta_id_str'].isin(valid_ids)].copy()
+        if df_filt.empty: return pd.DataFrame(), 0.0, 0
         
         res_prod = supabase.table("productos").select("codigo_barras, costo_compra, nombre").execute()
         c_map, n_map = {}, {}
@@ -162,16 +171,16 @@ def obtener_costo_y_detalles(df_cab):
                 c_map[str(p['codigo_barras'])] = float(p.get('costo_compra') or 0.0)
                 n_map[str(p['codigo_barras'])] = str(p.get('nombre') or 'Producto Desconocido')
         
-        df_det['costo_unit'] = df_det['producto_id'].astype(str).apply(lambda x: c_map.get(x, 0.0))
-        df_det['nombre_prod'] = df_det['producto_id'].astype(str).apply(lambda x: n_map.get(x, 'N/A'))
+        df_filt['costo_unit'] = df_filt['producto_id'].astype(str).apply(lambda x: c_map.get(x, 0.0))
+        df_filt['nombre_prod'] = df_filt['producto_id'].astype(str).apply(lambda x: n_map.get(x, 'N/A'))
         
-        df_det['cantidad'] = pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0)
-        df_det['costo_unit'] = pd.to_numeric(df_det['costo_unit'], errors='coerce').fillna(0)
+        df_filt['cantidad'] = pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0)
+        df_filt['costo_unit'] = pd.to_numeric(df_filt['costo_unit'], errors='coerce').fillna(0)
         
-        costo_total = float((df_det['costo_unit'] * df_det['cantidad']).sum())
-        cant_total = int(df_det['cantidad'].sum())
+        costo_total = float((df_filt['costo_unit'] * df_filt['cantidad']).sum())
+        cant_total = int(df_filt['cantidad'].sum())
         
-        return df_det, costo_total, cant_total
+        return df_filt, costo_total, cant_total
     except Exception as e:
         return pd.DataFrame(), 0.0, 0
 
@@ -272,8 +281,8 @@ if st.session_state.logged_in and st.session_state.is_admin:
     st.sidebar.divider()
     with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)", expanded=False):
         st.error("Esto borrará TODA la información operativa para iniciar en limpio.")
-        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_db_admin")
-        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_db_admin"):
+        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v16")
+        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v16"):
             if confirm_text == "RESETEAR":
                 with st.spinner("Borrando base de datos..."):
                     execute_factory_reset()
@@ -334,7 +343,6 @@ if menu == "📈 DASHBOARD GENERAL":
                         nom = u_dict.get('nombre_completo', f'ID:{uid}') if isinstance(u_dict, dict) else f'ID:{uid}'
                         personal_hoy.append(nom)
 
-            # 🛡️ PROTECCIÓN DE ROL: Ocultar utilidad si el vendedor no tiene permiso "reportes"
             es_gerencia = st.session_state.is_admin or "reportes" in st.session_state.user_perms
 
             st.write("#### ⚡ Resumen Directivo")
@@ -481,9 +489,9 @@ elif menu == "🛒 VENTAS (POS)":
                     cliente_dict = {}
                     if clientes_db.data:
                         for r in clientes_db.data:
-                            label = f"{r['dni_ruc']} - {r['nombre']}"
+                            label = f"{r.get('dni_ruc','')} - {r.get('nombre','')}"
                             opciones_clientes.append(label)
-                            cliente_dict[label] = r['id']
+                            cliente_dict[label] = r.get('id')
                 except: opciones_clientes = ["Público General (Sin registrar)"]; cliente_dict = {}
                 
                 cliente_sel = st.selectbox("Cliente (Opcional):", opciones_clientes)
@@ -514,7 +522,7 @@ elif menu == "🛒 VENTAS (POS)":
                     st.info(f"📲 Pide al cliente que escanee el código para pagar con {pago}:")
                     path_qr = get_qr_path(pago)
                     if path_qr: st.image(path_qr, width=220)
-                    else: st.warning(f"⚠️ Sube la imagen 'qr_{pago.lower()}.png' a tu GitHub.")
+                    else: st.warning(f"⚠️ Sube el archivo 'qr_{pago.lower()}.png' a GitHub.")
 
                 ref_pago = ""
                 if pago != "Efectivo":
@@ -651,7 +659,7 @@ elif menu == "🔄 DEVOLUCIONES":
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 🤝 MÓDULO 3: CLIENTES (CRM)
+# 🤝 MÓDULO 3: CLIENTES (CRM) - ESCUDO DINÁMICO
 # ==========================================
 elif menu == "🤝 CLIENTES (CRM)":
     st.markdown('<div class="main-header">Base de Datos de Clientes y CRM</div>', unsafe_allow_html=True)
@@ -662,26 +670,28 @@ elif menu == "🤝 CLIENTES (CRM)":
         try:
             cls_df = load_data("clientes")
             if not cls_df.empty: 
+                # ESCUDO DINÁMICO CONTRA ERRORES DE COLUMNA
                 cols_disponibles = cls_df.columns.tolist()
-                cols_a_mostrar = ['dni_ruc', 'nombre']
-                if 'telefono' in cols_disponibles: cols_a_mostrar.append('telefono')
-                if 'correo' in cols_disponibles: cols_a_mostrar.append('correo')
-                if 'created_at' in cols_disponibles: cols_a_mostrar.append('created_at')
+                cols_a_mostrar = [c for c in ['dni_ruc', 'nombre', 'telefono', 'correo', 'created_at'] if c in cols_disponibles]
+                
+                if not cols_a_mostrar: cols_a_mostrar = cols_disponibles
 
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
+                
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
                 
                 st.divider()
                 st.write("#### 🗑️ Eliminar Cliente")
-                cli_a_borrar = st.selectbox("Selecciona cliente a eliminar:", ["..."] + cls_df['nombre'].tolist())
-                if st.button("🗑️ Confirmar Eliminación Permanente", type="primary"):
-                    if cli_a_borrar != "...":
-                        dni_to_del = cls_df[cls_df['nombre'] == cli_a_borrar]['dni_ruc'].iloc[0]
-                        supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
-                        st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
-            else: st.info("No hay clientes registrados.")
-        except Exception as e: st.error(f"Error procesando clientes: {e}")
+                if 'nombre' in cls_df.columns and 'dni_ruc' in cls_df.columns:
+                    cli_a_borrar = st.selectbox("Selecciona cliente a eliminar:", ["..."] + cls_df['nombre'].astype(str).tolist())
+                    if st.button("🗑️ Confirmar Eliminación Permanente", type="primary"):
+                        if cli_a_borrar != "...":
+                            dni_to_del = cls_df[cls_df['nombre'] == cli_a_borrar]['dni_ruc'].iloc[0]
+                            supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
+                            st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
+            else: st.info("No hay clientes registrados en la Base de Datos.")
+        except Exception as e: st.error(f"Error cargando clientes. El servidor respondió: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -928,7 +938,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
         if len(lista) > 2: return f"Varios ({len(lista)})"
         return ", ".join(lista)
         
-    t_u1, t_u2, t_edit, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla", "➕ Nuevo", "✏️ Editar Perfil", "🔑 Clave", "⚙️ Permisos", "🗑️ Baja / Eliminar", "📊 Auditoría"])
+    t_u1, t_u2, t_edit, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla", "➕ Nuevo", "✏️ Editar", "🔑 Clave", "⚙️ Permisos", "🗑️ Baja", "📊 Auditoría"])
     
     usrs_db = supabase.table("usuarios").select("*").execute()
     df_u, df_activos, df_inactivos = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -960,7 +970,6 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     except: st.error("❌ El Nombre de Usuario (Login) ya existe en el sistema. Elija otro.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # REQ: EDITAR PERFIL DE VENDEDOR
     with t_edit:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         st.write("#### ✏️ Modificar Datos del Vendedor")
@@ -998,7 +1007,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
             with st.form("form_edit_perms"):
                 lista_permisos = ["mermas", "inventario_ver", "inventario_agregar", "inventario_modificar", "inventario_eliminar", "reportes", "cierre_caja", "gestion_usuarios"]
                 valid_curr = [p for p in curr_perms if p in lista_permisos]
-                new_perms = st.multiselect("Permisos Activos:", lista_permisos, default=valid_curr)
+                new_perms = st.multiselect("Permisos Activos (Agrega o quita con la 'X'):", lista_permisos, default=valid_curr)
                 if st.form_submit_button("💾 Actualizar Accesos", type="primary"):
                     if user_to_edit == "admin" and "gestion_usuarios" not in new_perms:
                         st.error("⚠️ Operación Bloqueada: No puedes despojar al 'admin' de su acceso a RRHH.")
@@ -1014,16 +1023,17 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
             if not df_activos.empty:
                 v_b = df_activos[df_activos['usuario'] != 'admin']['usuario'].tolist()
                 if v_b:
-                    u_del = st.selectbox("Suspender Acceso (Despido/Falta):", v_b)
-                    if st.button("🗑️ INHABILITAR USUARIO"):
+                    u_del = st.selectbox("Gestionar Usuario:", v_b)
+                    if st.button("🗑️ INHABILITAR (Mantener Historial)"):
                         supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute(); st.rerun()
                     st.divider()
-                    if st.button("❌ ELIMINAR DEFINITIVAMENTE (Solo usuarios prueba)"):
+                    if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
                         try:
                             supabase.table("usuarios").delete().eq("usuario", u_del).execute()
-                            st.success("Usuario borrado de la Base de Datos.")
+                            st.success("✅ Usuario eliminado de la base de datos.")
                             time.sleep(1); st.rerun()
-                        except: st.error("No se puede eliminar. Este vendedor ya tiene ventas o asistencias en el historial. Por favor, solo inhabilítalo para no romper los reportes.")
+                        except Exception as e:
+                            st.error("⚠️ No se puede eliminar. Este usuario ya tiene ventas o asistencias en su historial. Por favor, inhabilítalo.")
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -1095,7 +1105,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                 st.write("**Desempeño Financiero (Productividad)**")
                 c4, c5, c6 = st.columns(3)
                 c4.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero a Caja</div><div class='metric-value-small metric-blue'>S/. {v_hoy_ventas:.2f}</div></div>", unsafe_allow_html=True)
-                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>- S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
                 c6.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>UTILIDAD GENERADA</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
 
                 st.write("**Control de Asistencia y Turnos**")
@@ -1124,7 +1134,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
         tk = st.session_state.ticket_cierre
         st.success("✅ Reporte Z Generado Correctamente.")
         
-        # 🛡️ TICKET Z PARA CAJERO (Sin utilidades ni costos)
         ticket_cajero_html = f"""
         <div class="ticket-termico">
             <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>
@@ -1151,7 +1160,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
             st.session_state.ticket_cierre = None
             st.rerun()
     else:
-        # Pestañas Dinámicas según el Rol
         tabs_disponibles = ["📊 Balance de Turno (Caja)"]
         if es_gerencia:
             tabs_disponibles.extend(["📆 Historial Diario", "🧾 Historial de Tickets", "🖨️ Reimprimir Cierres Z"])
@@ -1162,7 +1170,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
             t_rep1 = tabs[0]
             t_rep2, t_rep3, t_rep4 = None, None, None
         
-        # --- PESTAÑA 1: TURNO ACTUAL ---
         with t_rep1:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             try:
@@ -1213,7 +1220,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 c2.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Efectivo (Caja)</div><div class='metric-value'>S/.{v_efe:.2f}</div></div>", unsafe_allow_html=True)
                 c3.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Digitales</div><div class='metric-value metric-purple'>S/.{v_dig:.2f}</div></div>", unsafe_allow_html=True)
                 
-                # 🛡️ OCULTAR INFORMACIÓN SENSIBLE AL CAJERO
                 if es_gerencia:
                     st.write("**2. Descuentos, Inversión y Fugas**")
                     c4, c5, c6 = st.columns(3)
@@ -1253,7 +1259,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 'ganancia_bruta': ganancia_bruta, 'caja_efectivo': caja_efectivo, 'utilidad': ganancia_neta, 'alertas_stock': alert_html
                             }
                             
-                            # 🛡️ GENERAR TICKET FANTASMA COMPLETO PARA EL ADMIN
                             tk_z_num = f"Z-{int(time.time())}"
                             tk_admin_html = f"""
                             <div class="ticket-termico">

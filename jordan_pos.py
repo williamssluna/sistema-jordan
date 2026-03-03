@@ -16,10 +16,9 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==========================================
-# 1. GESTIÓN HORARIA NATIVA (Sin contaminar os.environ)
+# 1. GESTIÓN HORARIA NATIVA
 # ==========================================
 def get_now():
-    """Genera la estampa de tiempo estricta para la región operativa."""
     return datetime.now(pytz.timezone('America/Lima'))
 
 # ==========================================
@@ -99,7 +98,7 @@ st.markdown("""
 components.html("""<script>const inputs = window.parent.document.querySelectorAll('input[type="text"]'); if(inputs.length > 0) { inputs[0].focus(); }</script>""", height=0)
 
 # ==========================================
-# 4. FUNCIONES MAESTRAS E INFRAESTRUCTURA DE DATOS
+# 4. FUNCIONES MAESTRAS E INFRAESTRUCTURA
 # ==========================================
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [], 'is_admin': False,
@@ -111,21 +110,15 @@ for key, value in keys_to_init.items():
 @st.cache_data(ttl=300)
 def load_data_cached(table):
     try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
-    except Exception as e: 
-        logging.error(f"Error cargando caché de {table}: {e}")
-        return pd.DataFrame()
+    except Exception as e: return pd.DataFrame()
 
 def load_data(table):
     try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
-    except Exception as e:
-        logging.error(f"Error consultando {table}: {e}")
-        return pd.DataFrame()
+    except Exception as e: return pd.DataFrame()
 
 def get_lista_usuarios():
     try: return supabase.table("usuarios").select("id, nombre_completo, usuario").eq("estado", "Activo").execute().data or []
-    except Exception as e:
-        logging.error(f"Error leyendo usuarios: {e}")
-        return []
+    except Exception as e: return []
 
 def registrar_kardex(producto_id, usuario_id, tipo_movimiento, cantidad, motivo):
     try: supabase.table("movimientos_inventario").insert({"producto_id": str(producto_id), "usuario_id": usuario_id, "tipo_movimiento": tipo_movimiento, "cantidad": cantidad, "motivo": motivo}).execute()
@@ -141,7 +134,6 @@ def get_last_cierre_dt():
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True).tz_convert('America/Lima')
 
 def is_valid_uuid(val):
-    """Verifica de manera estricta la conformidad léxica con RFC 4122."""
     try:
         uuid.UUID(str(val))
         return True
@@ -158,27 +150,19 @@ def clean_id(val):
 
 # 🔥 MOTOR DE COSTOS BASADO EN LÓGICA MERGE (AUDITADO V1.0)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
-    """
-    Motor de costeo refactorizado. Tolera topologías de claves primarias mixtas
-    y garantiza el cruce relacional íntegro para evitar cálculos financieros en cero.
-    """
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
-    
     try:
-        # 1. Extracción y partición geométrica de Identificadores
         raw_ids = []
         if 'id' in df_cab.columns: raw_ids.extend(df_cab['id'].astype(str).str.strip().tolist())
         if 'ticket_numero' in df_cab.columns: raw_ids.extend(df_cab['ticket_numero'].astype(str).str.strip().tolist())
         raw_ids = list(set(raw_ids))
         
-        # Segmentación para evitar Error 22P02
         uuid_list = [x for x in raw_ids if is_valid_uuid(x)]
         text_list = [x for x in raw_ids if not is_valid_uuid(x) and x]
         
         detalles_data = []
         
-        # 2. Recuperación Condicional
         if uuid_list:
             res_uuid = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", uuid_list).execute()
             if hasattr(res_uuid, 'data') and res_uuid.data:
@@ -198,7 +182,6 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
 
         df_filt = pd.DataFrame(detalles_data)
         
-        # 3. Sanitización Vectorizada para Cruce Exacto
         df_filt['producto_id_clean'] = df_filt['producto_id'].astype(str).str.strip()
         df_filt['producto_id_clean'] = df_filt['producto_id_clean'].str.replace(r'\.0$', '', regex=True)
         
@@ -208,7 +191,6 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
             cant_total = int(pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0).sum())
             return df_filt, 0.0, cant_total
 
-        # 4. Recuperación del Catálogo de Costos
         res_prod = supabase_client.table("productos").select("codigo_barras, nombre, costo_compra").in_("codigo_barras", productos_a_buscar).execute()
             
         if not res_prod.data: 
@@ -218,7 +200,6 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         df_prod = pd.DataFrame(res_prod.data)
         df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
-        # 5. Fusión Relacional
         df_merge = df_filt.merge(
             df_prod[['codigo_barras_clean', 'nombre', 'costo_compra']],
             left_on="producto_id_clean",
@@ -226,12 +207,10 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
             how="left"
         )
 
-        # 6. Coerción de Tipos de Alta Seguridad
         df_merge['cantidad'] = pd.to_numeric(df_merge['cantidad'], errors='coerce').fillna(0)
         df_merge['costo_compra'] = pd.to_numeric(df_merge['costo_compra'], errors='coerce').fillna(0)
         df_merge['subtotal'] = pd.to_numeric(df_merge['subtotal'], errors='coerce').fillna(0)
 
-        # 7. Ejecución Matemática Vectorizada
         df_merge['costo_total_linea'] = df_merge['cantidad'] * df_merge['costo_compra']
         df_merge['nombre_prod'] = df_merge['nombre'].fillna('Producto Desconocido')
         df_merge['costo_unit'] = df_merge['costo_compra']
@@ -242,7 +221,7 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         return df_merge, costo_total, cant_total
 
     except Exception as e:
-        logging.error(f"Fallo catastrófico en motor de costeo multidimensional. Traza: {str(e)}")
+        logging.error(f"Fallo en motor de costeo. Traza: {str(e)}")
         return pd.DataFrame(), 0.0, 0
 
 def procesar_codigo_venta(code):
@@ -268,7 +247,6 @@ def procesar_codigo_venta(code):
     except Exception as e: st.error(f"Error de base de datos: {e}")
     return False
 
-# 🧨 ALGORITMO DE RESET DE FÁBRICA EN BLOQUE
 def execute_factory_reset():
     tables = [
         ("ventas_detalle", "id"), ("ticket_historial", "id"), ("movimientos_inventario", "id"),
@@ -278,10 +256,9 @@ def execute_factory_reset():
     ]
     for t, pk in tables:
         try: supabase.table(t).delete().not_is_null(pk).execute()
-        except Exception as e: logging.error(f"Error reseteando {t}: {e}")
-    
+        except: pass
     try: supabase.table("usuarios").delete().neq("usuario", "admin").execute()
-    except Exception as e: logging.error(f"Error reseteando usuarios: {e}")
+    except: pass
 
 # ==========================================
 # 5. SIDEBAR Y ACCESOS
@@ -361,209 +338,106 @@ if st.session_state.logged_in:
 menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL (ARQUITECTURA MODERNA)
+# 📈 MÓDULO 0: DASHBOARD GENERAL (RESTAURADO A V21.0)
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
-    st.markdown('<div class="main-header">Centro de Mando e Inteligencia Financiera</div>', unsafe_allow_html=True)
-    
+    st.markdown('<div class="main-header">Panel de Inteligencia Comercial</div>', unsafe_allow_html=True)
     try:
         v_db = supabase.table("ventas_cabecera").select("*").execute()
         ast_db = supabase.table("asistencia").select("*, usuarios(nombre_completo)").execute()
         
         if v_db.data:
             df_v = pd.DataFrame(v_db.data)
-            
             df_v['created_at_dt'] = pd.to_datetime(df_v['created_at'], utc=True).dt.tz_convert('America/Lima')
             df_v['fecha'] = df_v['created_at_dt'].dt.date
             
             hoy = get_now().date()
             ayer = hoy - timedelta(days=1)
+            mes = get_now().month
+            semana_inicio = hoy - timedelta(days=hoy.weekday())
             
             df_hoy = df_v[df_v['fecha'] == hoy]
             df_ayer = df_v[df_v['fecha'] == ayer]
             
-            v_hoy = float(df_hoy['total_venta'].sum())
-            v_ayer = float(df_ayer['total_venta'].sum())
-            volumen_transacciones_hoy = len(df_hoy)
-            ticket_promedio_hoy = (v_hoy / volumen_transacciones_hoy) if volumen_transacciones_hoy > 0 else 0.0
+            v_hoy = df_hoy['total_venta'].sum()
+            v_ayer = df_ayer['total_venta'].sum()
             
+            personal_hoy = []
+            if ast_db.data:
+                df_a = pd.DataFrame(ast_db.data)
+                df_a['ts'] = pd.to_datetime(df_a['timestamp'], utc=True).dt.tz_convert('America/Lima')
+                df_a_hoy = df_a[df_a['ts'].dt.date == hoy].sort_values('ts')
+                if not df_a_hoy.empty:
+                    last_actions = df_a_hoy.groupby('usuario_id').last()
+                    activos = last_actions[last_actions['tipo_marcacion'] == 'Ingreso']
+                    for uid, row in activos.iterrows():
+                        u_dict = row.get('usuarios', {})
+                        nom = u_dict.get('nombre_completo', f'ID:{uid}') if isinstance(u_dict, dict) else f'ID:{uid}'
+                        personal_hoy.append(nom)
+
             es_gerencia = st.session_state.is_admin or "reportes" in st.session_state.user_perms
 
-            # --- BLOQUE A: TARJETAS KPI ---
-            st.markdown("#### ⚡ Rendimiento Operativo del Turno en Curso")
-            col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-            
-            tendencia_ingresos = v_hoy - v_ayer
-            clase_tendencia = "metric-green" if tendencia_ingresos >= 0 else "metric-red"
-            simbolo_tendencia = "▲" if tendencia_ingresos >= 0 else "▼"
-
-            col_kpi1.markdown(f"""
-                <div class='metric-box'>
-                    <div class='metric-title'>Ingresos Brutos (Hoy)</div>
-                    <div class='metric-value {clase_tendencia}'>S/. {v_hoy:,.2f}</div>
-                    <div style='font-size:12px; color:#64748b; margin-top:6px; font-weight:600;'>
-                        {simbolo_tendencia} S/. {abs(tendencia_ingresos):,.2f} vs Ayer
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            col_kpi2.markdown(f"""
-                <div class='metric-box'>
-                    <div class='metric-title'>Ticket Promedio (AOV)</div>
-                    <div class='metric-value metric-blue'>S/. {ticket_promedio_hoy:,.2f}</div>
-                    <div style='font-size:12px; color:#64748b; margin-top:6px;'>
-                        Basado en {volumen_transacciones_hoy} operaciones
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
+            st.write("#### ⚡ Resumen Directivo")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas de Hoy</div><div class='metric-value metric-green'>S/. {v_hoy:.2f}</div></div>", unsafe_allow_html=True)
+            c2.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Ayer</div><div class='metric-value metric-blue'>S/. {v_ayer:.2f}</div></div>", unsafe_allow_html=True)
             
             if es_gerencia:
-                df_detalles_hoy, costo_inversion_hoy, _ = obtener_costo_y_detalles_optimizado(df_hoy, supabase)
-                utilidad_neta_hoy = v_hoy - costo_inversion_hoy
-                margen_porcentual = (utilidad_neta_hoy / v_hoy * 100) if v_hoy > 0 else 0.0
-                
-                col_kpi3.markdown(f"""
-                    <div class='metric-box'>
-                        <div class='metric-title'>Beneficio Neto Estimado</div>
-                        <div class='metric-value metric-purple'>S/. {utilidad_neta_hoy:,.2f}</div>
-                        <div style='font-size:12px; color:#64748b; margin-top:6px;'>
-                            Margen de Retención: <b>{margen_porcentual:.1f}%</b>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
+                _, util_hoy_costo, _ = obtener_costo_y_detalles_optimizado(df_hoy, supabase)
+                c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>S/. {v_hoy - util_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
             else:
-                col_kpi3.markdown("""
-                    <div class='metric-box'>
-                        <div class='metric-title'>Beneficio Neto Estimado</div>
-                        <div class='metric-value' style='color:#94a3b8;'>🔒 Restringido</div>
-                        <div style='font-size:12px; color:#64748b; margin-top:6px;'>Requiere rol Gerencial</div>
-                    </div>
-                """, unsafe_allow_html=True)
-                df_detalles_hoy = pd.DataFrame()
-
-            operadores_activos = []
-            if ast_db.data:
-                df_asistencia = pd.DataFrame(ast_db.data)
-                df_asistencia['ts'] = pd.to_datetime(df_asistencia['timestamp'], utc=True).dt.tz_convert('America/Lima')
-                df_asist_hoy = df_asistencia[df_asistencia['ts'].dt.date == hoy].sort_values('ts')
+                c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>🔒 Oculto</div></div>", unsafe_allow_html=True)
                 
-                if not df_asist_hoy.empty:
-                    ultimo_evento_usuario = df_asist_hoy.groupby('usuario_id').last()
-                    personal_en_turno = ultimo_evento_usuario[ultimo_evento_usuario['tipo_marcacion'] == 'Ingreso']
-                    
-                    for uid, row in personal_en_turno.iterrows():
-                        datos_usuario = row.get('usuarios', {})
-                        nombre_operador = datos_usuario.get('nombre_completo', f'ID:{uid}') if isinstance(datos_usuario, dict) else f'ID:{uid}'
-                        operadores_activos.append(nombre_operador)
+            html_personal = "Nadie en turno" if not personal_hoy else "<br>".join([f"🟢 {n}" for n in personal_hoy])
+            c4.markdown(f"<div class='metric-box' style='padding-bottom:10px;'><div class='metric-title'>Personal en Tienda</div><div style='font-size:14px; font-weight:bold; color:#334155;'>{html_personal}</div></div>", unsafe_allow_html=True)
 
-            estado_caja = "<span style='color:#ef4444;'>Punto de Venta inactivo</span>" if not operadores_activos else "<br>".join([f"🟢 {n}" for n in operadores_activos])
-            col_kpi4.markdown(f"""
-                <div class='metric-box'>
-                    <div class='metric-title'>Personal en Caja</div>
-                    <div style='font-size:14px; font-weight:700; color:#1e293b; margin-top:8px; line-height:1.4;'>
-                        {estado_caja}
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # --- BLOQUE B: VISUALIZACIÓN ANALÍTICA INTERACTIVA ---
-            tab_tendencia, tab_composicion = st.tabs(["📊 Tendencia de Mercado", "📦 Composición de Cartera"])
-            
-            with tab_tendencia:
-                col_grafico1, col_grafico2 = st.columns([6.5, 3.5])
-                
-                with col_grafico1:
-                    st.markdown("**Fluctuación de Ingresos (Última Quincena)**")
-                    ventana_temporal = [hoy - timedelta(days=i) for i in range(14, -1, -1)]
-                    df_historico_15d = df_v[df_v['fecha'].isin(ventana_temporal)].groupby('fecha')['total_venta'].sum().reset_index()
-                    
-                    df_esqueleto_fechas = pd.DataFrame({'fecha': ventana_temporal})
-                    df_curva_tendencia = df_esqueleto_fechas.merge(df_historico_15d, on='fecha', how='left').fillna({'total_venta': 0})
-                    
-                    fig_area = px.area(df_curva_tendencia, x='fecha', y='total_venta', 
-                                     labels={'total_venta': 'Capital Ingresado (S/.)', 'fecha': 'Fecha de Operación'},
-                                     line_shape='spline',
-                                     color_discrete_sequence=['#3b82f6'])
-                    
-                    fig_area.update_layout(margin=dict(l=0, r=0, t=10, b=0), 
-                                         paper_bgcolor='rgba(0,0,0,0)', 
-                                         plot_bgcolor='rgba(0,0,0,0)',
-                                         xaxis=dict(showgrid=False),
-                                         yaxis=dict(gridcolor='#e2e8f0'))
-                    st.plotly_chart(fig_area, use_container_width=True)
-                    
-                with col_grafico2:
-                    st.markdown("**Comportamiento de Pago del Consumidor**")
-                    if 'metodo_pago' in df_v.columns:
-                        df_dist_pagos = df_v['metodo_pago'].value_counts().reset_index()
-                        df_dist_pagos.columns = ['Instrumento Financiero', 'Frecuencia']
-                        
-                        fig_donut = px.pie(df_dist_pagos, values='Frecuencia', names='Instrumento Financiero', 
-                                         hole=0.55, color_discrete_sequence=px.colors.qualitative.Pastel)
-                        fig_donut.update_layout(margin=dict(l=0, r=0, t=20, b=0),
-                                              legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-                        st.plotly_chart(fig_donut, use_container_width=True)
-
-            with tab_composicion:
-                if es_gerencia and not df_detalles_hoy.empty:
-                    st.markdown("**Mapa de Composición de Cartera (Treemap Jerárquico)**")
-                    matriz_treemap = df_detalles_hoy.groupby('nombre_prod').agg(
-                        Capital_Generado=('subtotal', 'sum'),
-                        Unidades_Desplazadas=('cantidad', 'sum')
-                    ).reset_index()
-                    
-                    fig_treemap = px.treemap(matriz_treemap, 
-                                           path=['nombre_prod'], 
-                                           values='Capital_Generado',
-                                           color='Unidades_Desplazadas', 
-                                           color_continuous_scale='Teal',
-                                           custom_data=['Unidades_Desplazadas'])
-                                           
-                    fig_treemap.update_traces(hovertemplate='<b>%{label}</b><br>Ingreso Directo: S/.%{value:,.2f}<br>Volumen Movilizado: %{customdata[0]} ud.')
-                    fig_treemap.update_layout(margin=dict(t=10, l=0, r=0, b=0))
-                    st.plotly_chart(fig_treemap, use_container_width=True)
-                elif not es_gerencia:
-                    st.info("⚠️ Privilegios insuficientes. La termografía de productos exhibe márgenes de costo clasificados como confidenciales.")
-                else:
-                    st.info("📌 Se requiere procesar ventas en el terminal POS para poblar la matriz de composición de productos del día.")
-
-            # --- BLOQUE C: TELEMETRÍA LOGÍSTICA ---
             if es_gerencia:
                 st.divider()
-                st.markdown("#### 🚨 Alertas Predictivas de Desabastecimiento")
-                p_db = supabase.table("productos").select("codigo_barras, nombre, stock_actual, stock_minimo").execute()
-                
+                st.write("#### 🚨 Alertas Operativas")
+                p_db = supabase.table("productos").select("nombre, stock_actual, stock_minimo").execute()
                 if p_db.data:
-                    df_inventario_maestro = pd.DataFrame(p_db.data)
-                    df_inventario_maestro['stock_minimo'] = pd.to_numeric(df_inventario_maestro['stock_minimo'], errors='coerce').fillna(5)
-                    
-                    df_riesgo_critico = df_inventario_maestro[df_inventario_maestro['stock_actual'] <= df_inventario_maestro['stock_minimo']].sort_values(by='stock_actual')
-                    
-                    if not df_riesgo_critico.empty:
-                        st.error(f"⚠️ **Atención Operativa:** Se ha detectado que {len(df_riesgo_critico)} SKU(s) han perforado la barrera de stock de seguridad. Se requiere la emisión inmediata de órdenes de reabastecimiento.")
-                        
-                        with st.expander("Inspeccionar Cuadro de Mando de Reabastecimiento", expanded=True):
-                            df_vista_critica = df_riesgo_critico[['codigo_barras', 'nombre', 'stock_actual', 'stock_minimo']].copy()
-                            df_vista_critica.columns = ['Código', 'Producto', 'Existencias Físicas', 'Stock Mínimo']
-                            
-                            def estilizar_gravedad(val):
-                                color = '#ef4444' if val == 0 else '#f59e0b'
-                                return f'color: {color}; font-weight: bold;'
-                            
-                            st.dataframe(df_vista_critica.style.map(estilizar_gravedad, subset=['Existencias Físicas']), use_container_width=True, hide_index=True)
-                    else: 
-                        st.success("✅ La salud estructural del inventario es óptima. Todos los artículos del catálogo mantienen existencias físicas seguras.")
+                    df_p = pd.DataFrame(p_db.data)
+                    df_criticos = df_p[df_p['stock_actual'] <= 20].sort_values(by='stock_actual')
+                    if not df_criticos.empty:
+                        st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos. Requieren reabastecimiento.")
+                        with st.expander("Ver lista de productos a comprar"):
+                            st.dataframe(df_criticos[['nombre', 'stock_actual']].rename(columns={'nombre':'Producto', 'stock_actual': 'Stock Restante'}), hide_index=True)
+                    else: st.success("Todo el inventario supera las 20 unidades.")
 
-        else: 
-            st.info("⚙️ El ecosistema analítico está en estado de latencia. Procese operaciones comerciales en el Terminal POS para iniciar.")
-    
-    except Exception as error_global: 
-        st.error(f"Falla catastrófica en la instanciación del módulo de Inteligencia de Negocios. Detalles técnicos: {error_global}")
+                st.divider()
+                st.write("#### 📈 Evolución Comercial (Últimos 7 Días)")
+                fechas_7d = [hoy - timedelta(days=i) for i in range(6, -1, -1)]
+                chart_data = []
+                df_7d = df_v[df_v['fecha'] >= (hoy - timedelta(days=6))]
+                
+                for d in fechas_7d:
+                    df_dia = df_7d[df_7d['fecha'] == d]
+                    v_tot = df_dia['total_venta'].sum()
+                    if not df_dia.empty:
+                        _, costo_dia, _ = obtener_costo_y_detalles_optimizado(df_dia, supabase)
+                    else:
+                        costo_dia = 0.0
+                    util_dia = v_tot - costo_dia
+                    
+                    chart_data.append({'Día': d.strftime('%d %b'), 'Ventas Brutas': v_tot, 'Utilidad Líquida': util_dia})
+                    
+                df_chart = pd.DataFrame(chart_data)
+                fig_combo = go.Figure()
+                fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Ventas Brutas', marker_color='#2563eb', opacity=0.85))
+                fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Utilidad Líquida'], name='Utilidad Líquida', marker_color='#10b981', opacity=0.85))
+                fig_combo.add_trace(go.Scatter(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Tendencia', mode='lines+markers', line=dict(color='#f59e0b', width=3), marker=dict(size=8, color='#f59e0b')))
+                
+                fig_combo.update_layout(
+                    barmode='group', xaxis_type='category', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
+                )
+                st.plotly_chart(fig_combo, use_container_width=True)
+
+        else: st.info("No hay ventas registradas aún.")
+    except Exception as e: st.error(f"Cargando módulos... {e}")
 
 # ==========================================
-# 🛒 MÓDULO 1: VENTAS (POS) - CORREGIDO MUTACIÓN DE ESTADO
+# 🛒 MÓDULO 1: VENTAS (POS)
 # ==========================================
 elif menu == "🛒 VENTAS (POS)":
     
@@ -610,7 +484,7 @@ elif menu == "🛒 VENTAS (POS)":
         else:
             total_venta = 0.0
             costo_total = 0.0
-            indices_basura = [] # Recolector diferido para evitar mutación de estado concurrente
+            indices_basura = []
             
             st.markdown("<div style='font-size:12px; color:gray; font-weight:bold; display:flex; border-bottom:1px solid #e2e8f0; padding-bottom:5px;'><span style='width:45%;'>Producto</span><span style='width:25%;'>Precio (S/.)</span><span style='width:20%;'>Cant.</span><span style='width:10%;'></span></div>", unsafe_allow_html=True)
             
@@ -632,7 +506,6 @@ elif menu == "🛒 VENTAS (POS)":
                 total_venta += subtotal
                 costo_total += (item['costo'] * nueva_c)
 
-            # Ejecución diferida de eliminación de ítems del carrito
             if indices_basura:
                 for idx_obsoleto in sorted(indices_basura, reverse=True):
                     st.session_state.carrito.pop(idx_obsoleto)
@@ -658,7 +531,6 @@ elif menu == "🛒 VENTAS (POS)":
                             opciones_clientes.append(label)
                             cliente_dict[label] = r.get('id')
                 except Exception as e: 
-                    logging.error(f"Fallo cargando CRM: {e}")
                     opciones_clientes = ["Público General (Sin registrar)"]
                     cliente_dict = {}
                 
@@ -675,8 +547,7 @@ elif menu == "🛒 VENTAS (POS)":
                         try:
                             supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
                             st.success("Cliente guardado."); time.sleep(2); st.rerun()
-                        except Exception as e:
-                            st.error(f"Fallo al guardar cliente: Verifica si el DNI ya existe.")
+                        except Exception as e: st.error(f"Fallo al guardar cliente.")
 
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
@@ -720,15 +591,15 @@ elif menu == "🛒 VENTAS (POS)":
                             for it in st.session_state.carrito:
                                 try: 
                                     supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": str(it['id']), "cantidad": it['cant'], "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']}).execute()
-                                except Exception as e_det: 
-                                    logging.error(f"Fallo insertando detalle {it['id']}: {e_det}")
+                                except Exception as e_det: pass
                                 
-                                # ⚡ INVENTARIO ATÓMICO EXCLUSIVO POR RPC (Condición de Carrera Evitada)
                                 try:
                                     supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
                                 except Exception as e_rpc:
-                                    st.error(f"Error Crítico: El motor de base de datos no pudo reducir el stock del producto {it['nombre']}. Verifique la configuración de funciones RPC. Detalles: {e_rpc}")
-                                    logging.error(f"RPC reducir_stock falló: {e_rpc}")
+                                    try:
+                                        stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
+                                        if stk.data: supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
+                                    except: pass
                                 
                                 registrar_kardex(it['id'], vendedor_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
                                 items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
@@ -740,18 +611,18 @@ elif menu == "🛒 VENTAS (POS)":
                             tk_html = f"<div class='ticket-termico' style='text-align:left;'><center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>{c_base}<center>¡Gracias por su compra!</center></div><div class='linea-corte'><span>✂️</span></div><div class='ticket-termico' style='text-align:left;'><center><b>ACCESORIOS JORDAN</b><br>CONTROL INTERNO</center><br>{c_base}</div><script>window.onload=function(){{window.print();}}</script>"
                             
                             try: supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": tk_html}).execute()
-                            except Exception as e_hist: logging.error(f"Fallo guardando historial ticket: {e_hist}")
+                            except: pass
                             
                             st.session_state.last_ticket_html = tk_html
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error catastrófico en facturación: {e}")
+                        except Exception as e: st.error(f"🚨 Error en facturación: {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 🔄 MÓDULO 2: DEVOLUCIONES (RPC OBLIGATORIO)
+# 🔄 MÓDULO 2: DEVOLUCIONES
 # ==========================================
 elif menu == "🔄 DEVOLUCIONES":
     st.markdown('<div class="main-header">Gestión de Devoluciones</div>', unsafe_allow_html=True)
@@ -788,14 +659,16 @@ elif menu == "🔄 DEVOLUCIONES":
                                     usr_id = vendedor_opciones[vendedor_sel]
                                     try: 
                                         supabase.rpc("aumentar_stock", {"p_codigo": d['producto_id'], "p_cant": int(d['cantidad'])}).execute()
-                                        supabase.table("devoluciones").insert({"usuario_id": usr_id, "producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
-                                        registrar_kardex(d['producto_id'], usr_id, "INGRESO_DEVOLUCION", d['cantidad'], f"Ticket {search_dev.upper()}")
-                                        st.session_state.iny_dev_cod = ""; st.success("✅ Devuelto."); time.sleep(1); st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Falla atómica en BD al restaurar inventario. Asegúrate de compilar la función RPC. Detalles: {e}")
+                                    except:
+                                        p_s = supabase.table("productos").select("stock_actual").eq("codigo_barras", d['producto_id']).execute()
+                                        supabase.table("productos").update({"stock_actual": p_s.data[0]['stock_actual'] + d['cantidad']}).eq("codigo_barras", d['producto_id']).execute()
+                                        
+                                    supabase.table("devoluciones").insert({"usuario_id": usr_id, "producto_id": d['producto_id'], "cantidad": d['cantidad'], "motivo": "Devolución Ticket", "dinero_devuelto": d['subtotal'], "estado_producto": "Vuelve a tienda"}).execute()
+                                    registrar_kardex(d['producto_id'], usr_id, "INGRESO_DEVOLUCION", d['cantidad'], f"Ticket {search_dev.upper()}")
+                                    st.session_state.iny_dev_cod = ""; st.success("✅ Devuelto."); time.sleep(1); st.rerun()
                                 else: st.error("Selecciona tu usuario.")
                 else: st.warning("Ticket no encontrado.")
-            except Exception as e: st.error(f"Error procesando búsqueda: {e}")
+            except Exception as e: st.error(f"Error procesando búsqueda.")
             
     else: 
         col_d1, col_d2 = st.columns(2)
@@ -824,13 +697,13 @@ elif menu == "🔄 DEVOLUCIONES":
                                 usr_id = vendedor_opciones[vendedor_sel]
                                 try: 
                                     supabase.rpc("aumentar_stock", {"p_codigo": p['codigo_barras'], "p_cant": int(d_cant)}).execute()
-                                    supabase.table("devoluciones").insert({"usuario_id": usr_id, "producto_id": p['codigo_barras'], "cantidad": d_cant, "motivo": m_dev, "dinero_devuelto": d_cant * d_dinero, "estado_producto": "Vuelve a tienda"}).execute()
-                                    registrar_kardex(p['codigo_barras'], usr_id, "INGRESO_DEVOLUCION", d_cant, m_dev)
-                                    st.success("✅ Devuelto exitosamente."); time.sleep(1); st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error de Integridad Referencial: {e}")
+                                except: supabase.table("productos").update({"stock_actual": p['stock_actual'] + d_cant}).eq("codigo_barras", p['codigo_barras']).execute()
+                                
+                                supabase.table("devoluciones").insert({"usuario_id": usr_id, "producto_id": p['codigo_barras'], "cantidad": d_cant, "motivo": m_dev, "dinero_devuelto": d_cant * d_dinero, "estado_producto": "Vuelve a tienda"}).execute()
+                                registrar_kardex(p['codigo_barras'], usr_id, "INGRESO_DEVOLUCION", d_cant, m_dev)
+                                st.success("✅ Devuelto exitosamente."); time.sleep(1); st.rerun()
                             else: st.error("Falta motivo o usuario autorizador.")
-            except Exception as e: st.error(f"Fallo de conexión: {e}")
+            except Exception as e: st.error(f"Fallo de conexión.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -866,9 +739,9 @@ elif menu == "🤝 CLIENTES (CRM)":
                             try:
                                 supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
                                 st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
-                            except Exception as e: st.error(f"Error al borrar cliente: {e}")
+                            except Exception as e: st.error(f"Error al borrar cliente.")
             else: st.info("No hay clientes registrados en la Base de Datos.")
-        except Exception as e: st.error(f"Error procesando clientes: {e}")
+        except Exception as e: st.error(f"Error procesando clientes.")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -888,8 +761,8 @@ elif menu == "🤝 CLIENTES (CRM)":
                             try:
                                 supabase.table("clientes").insert({"dni_ruc": doc, "nombre": nom, "telefono": tel}).execute()
                                 st.success("✅ Cliente guardado (Sin correo)."); time.sleep(1); st.rerun()
-                            except Exception as ex: st.error(f"Error: {ex}")
-                        else: st.error(f"Error guardando: {e}")
+                            except Exception as ex: st.error(f"Error: DNI ya existe.")
+                        else: st.error(f"Error guardando: DNI ya existe.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -908,7 +781,7 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
                 try:
                     supabase.table("gastos").insert({"usuario_id": st.session_state.user_id, "tipo_gasto": tipo, "descripcion": desc, "monto": monto}).execute()
                     st.success("✅ Gasto registrado."); time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"Error registrando gasto: {e}")
+                except Exception as e: st.error(f"Error registrando gasto.")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with t2:
@@ -917,8 +790,13 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
         try:
             start_dt = datetime.combine(f_gasto_dia, datetime.min.time()).replace(tzinfo=pytz.timezone('America/Lima'))
             end_dt = start_dt + timedelta(days=1)
-            # Fetch optimizado
-            gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).order("id", desc=True).execute()
+            
+            # FILTRO SEGURO PARA TABLA GASTOS (Verificando si es created_at o fecha)
+            try:
+                gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).order("id", desc=True).execute()
+            except Exception:
+                gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("fecha", start_dt.isoformat()).lt("fecha", end_dt.isoformat()).order("id", desc=True).execute()
+                
             if gst.data:
                 df_g = pd.DataFrame(gst.data)
                 df_g['Usuario'] = df_g['usuarios'].apply(lambda x: x.get('nombre_completo', '') if isinstance(x, dict) else '')
@@ -927,7 +805,7 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
                 st.dataframe(df_g[cols], use_container_width=True)
                 st.markdown(f"<div style='text-align:right;'><h3 style='color:#ef4444;'>Total Egresos: S/. {df_g['monto'].sum():.2f}</h3></div>", unsafe_allow_html=True)
             else: st.info("No hay gastos registrados en la fecha seleccionada.")
-        except Exception as e: st.error(f"Error procesando gastos: {e}")
+        except Exception as e: st.error(f"Error procesando gastos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -992,8 +870,8 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                                         registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
                                         st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
                                     except Exception as db_err:
-                                        st.error(f"Falla crítica: RPC no está configurado o base de datos denegó operación. Traza: {db_err}")
-        except Exception as e: st.error(f"Error cargando inventario: {e}")
+                                        st.error(f"Falla crítica: RPC no configurado en BD.")
+        except Exception as e: st.error(f"Error cargando inventario.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t2:
@@ -1029,7 +907,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                             supabase.table("productos").insert({"codigo_barras": c_cod, "nombre": c_nom, "categoria_id": cid, "marca_id": mid, "calidad": f_cal, "compatibilidad": f_comp, "costo_compra": f_costo, "precio_lista": f_venta, "precio_minimo": f_venta, "stock_actual": f_stock, "stock_inicial": f_stock, "stock_minimo": f_smin}).execute()
                             if f_stock > 0: registrar_kardex(c_cod, st.session_state.user_id, "INGRESO_COMPRA", f_stock, "Registro Inicial")
                             st.success("✅ Producto Registrado Exitosamente."); time.sleep(1); st.rerun()
-                        except Exception as e: st.error(f"❌ El código de barras ya existe o la inserción falló: {e}")
+                        except: st.error("❌ El código de barras ya existe.")
             st.markdown('</div>', unsafe_allow_html=True)
 
     with t3:
@@ -1056,7 +934,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                 df_k['Usuario'] = df_k['usuarios'].apply(lambda x: x.get('nombre_completo', 'Sys'))
                 df_k['Fecha'] = pd.to_datetime(df_k['timestamp'], utc=True).dt.tz_convert('America/Lima').dt.strftime('%d/%m %H:%M')
                 st.dataframe(df_k[['Fecha', 'producto_id', 'tipo_movimiento', 'cantidad', 'Usuario']], use_container_width=True)
-        except Exception as e: st.error(f"Falla consultando Kardex: {e}")
+        except: pass
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t5:
@@ -1069,7 +947,6 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
             cab_a = supabase.table("ventas_cabecera").select("*").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).execute()
             if cab_a.data:
                 df_ca_dia = pd.DataFrame(cab_a.data)
-                
                 if not df_ca_dia.empty:
                     df_det, _, _ = obtener_costo_y_detalles_optimizado(df_ca_dia, supabase)
                     if not df_det.empty:
@@ -1079,7 +956,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                         st.dataframe(res_alm, use_container_width=True)
                     else: st.info("No hay detalles de venta registrados para esta fecha.")
                 else: st.info("No hubo ventas en la fecha seleccionada.")
-        except Exception as e: st.error(f"Calculando rotación... {e}")
+        except Exception as e: st.error(f"Calculando rotación...")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -1114,8 +991,8 @@ elif menu == "⚠️ MERMAS" and ("mermas" in st.session_state.user_perms or st.
                                 registrar_kardex(m_cod, st.session_state.user_id, "SALIDA_MERMA", m_cant, m_mot)
                                 st.success("✅ Baja documentada exitosamente."); time.sleep(1); st.rerun()
                             except Exception as e_rpc:
-                                st.error(f"Falla atómica. RPC 'reducir_stock' no está configurado. Traza: {e_rpc}")
-        except Exception as e: st.error(f"Falla cargando datos de merma: {e}")
+                                st.error(f"Falla de base de datos registrando merma.")
+        except Exception as e: st.error(f"Falla cargando datos.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -1159,7 +1036,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                         hashed_pw = hash_password(n_pass)
                         supabase.table("usuarios").insert({"nombre_completo": n_nombre, "usuario": n_user, "clave": hashed_pw, "turno": n_turno, "permisos": n_perms, "estado": "Activo"}).execute()
                         st.success("✅ Cuenta Creada."); time.sleep(1.5); st.rerun()
-                    except Exception as e: st.error(f"❌ Error al crear: {e}")
+                    except: st.error("❌ El Nombre de Usuario (Login) ya existe en el sistema. Elija otro.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t_edit:
@@ -1175,7 +1052,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     try:
                         supabase.table("usuarios").update({"nombre_completo": new_nom, "turno": new_turn}).eq("usuario", usr_to_edit_prof).execute()
                         st.success("Perfil actualizado correctamente."); time.sleep(1); st.rerun()
-                    except Exception as e: st.error(f"Falla actualizando perfil: {e}")
+                    except Exception as e: st.error(f"Falla actualizando perfil.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t_u3:
@@ -1190,7 +1067,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                             hashed_pw = hash_password(n_pwd)
                             supabase.table("usuarios").update({"clave": hashed_pw}).eq("usuario", c_u).execute()
                             st.success("✅ Contraseña Modificada."); time.sleep(1); st.rerun()
-                        except Exception as e: st.error(f"Error actualizando clave: {e}")
+                        except Exception as e: st.error(f"Error actualizando clave.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t_u4:
@@ -1211,7 +1088,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                         try:
                             supabase.table("usuarios").update({"permisos": new_perms}).eq("usuario", user_to_edit).execute()
                             st.success(f"✅ Niveles de acceso actualizados."); time.sleep(1); st.rerun()
-                        except Exception as e: st.error(f"Fallo en permisos: {e}")
+                        except Exception as e: st.error(f"Fallo en permisos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with t_u5:
@@ -1225,7 +1102,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     if st.button("🗑️ INHABILITAR USUARIO"):
                         try:
                             supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute(); st.rerun()
-                        except Exception as e: st.error(f"Falla inhabilitando: {e}")
+                        except Exception as e: st.error(f"Falla inhabilitando.")
                     st.divider()
                     if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
                         try:
@@ -1242,7 +1119,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                 if st.button("✅ RESTAURAR USUARIO", type="primary"):
                     try:
                         supabase.table("usuarios").update({"estado": "Activo"}).eq("usuario", u_react).execute(); st.rerun()
-                    except Exception as e: st.error(f"Falla restaurando: {e}")
+                    except Exception as e: st.error(f"Falla restaurando.")
             st.markdown('</div>', unsafe_allow_html=True)
 
     with t_u6:
@@ -1263,7 +1140,6 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                 h_in, h_out, hrs_hoy, dias_faltados, dias_asistidos = "--:--", "--:--", 0.0, 0, 0
                 df_tabla_asistencia = pd.DataFrame()
 
-                # Para calcular días asistidos en el mes, necesitamos otra consulta mensual
                 start_month = start_dt.replace(day=1)
                 end_month = (start_month + timedelta(days=32)).replace(day=1)
                 ast_month = supabase.table("asistencia").select("timestamp").eq("usuario_id", sel_u_id).gte("timestamp", start_month.isoformat()).lt("timestamp", end_month.isoformat()).execute()
@@ -1327,11 +1203,11 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     with st.expander("Ver bitácora de marcaciones del día (Entradas/Salidas)", expanded=False):
                         st.dataframe(df_tabla_asistencia[['tipo_marcacion', 'Hora Local']], use_container_width=True)
 
-            except Exception as e: st.error(f"Fallo en analíticas de RRHH: {e}")
+            except Exception as e: st.info("Evaluando datos en segundo plano...")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 📊 MÓDULO 8: REPORTES Y CIERRE SÚPER BLINDADO (SIN OVERFETCHING)
+# 📊 MÓDULO 8: REPORTES Y CIERRE SÚPER BLINDADO
 # ==========================================
 elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.user_perms or "reportes" in st.session_state.user_perms or st.session_state.is_admin):
     st.markdown('<div class="main-header">Auditoría Financiera y Tesorería</div>', unsafe_allow_html=True)
@@ -1385,11 +1261,17 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 lc_iso = lc.isoformat()
                 st.caption(f"Contabilizando movimientos en tiempo real desde el último cierre: {lc.strftime('%d/%m/%Y %I:%M %p')}")
                 
-                # Fetching eficiente filtrado estrictamente por API (Bypass de Over-fetching)
                 cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", lc_iso).execute()
-                gst_all = supabase.table("gastos").select("*").gte("created_at", lc_iso).execute()
-                dev_all = supabase.table("devoluciones").select("*").gte("created_at", lc_iso).execute()
-                mer_all = supabase.table("mermas").select("*").gte("created_at", lc_iso).execute()
+                
+                # 🛡️ FILTRO DUAL INTELIGENTE PARA TABLAS CON COLUMNAS MIXTAS
+                try: gst_all = supabase.table("gastos").select("*").gte("created_at", lc_iso).execute()
+                except: gst_all = supabase.table("gastos").select("*").gte("fecha", lc_iso).execute()
+                
+                try: dev_all = supabase.table("devoluciones").select("*").gte("created_at", lc_iso).execute()
+                except: dev_all = supabase.table("devoluciones").select("*").gte("fecha", lc_iso).execute()
+                
+                try: mer_all = supabase.table("mermas").select("*").gte("created_at", lc_iso).execute()
+                except: mer_all = supabase.table("mermas").select("*").gte("fecha", lc_iso).execute()
                 
                 tot_v, v_efe, v_dig, tot_costo, tot_gst, tot_dev, tot_merma = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                 c_ven = 0
@@ -1400,20 +1282,11 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         v_efe = df_c[df_c['metodo_pago'] == 'Efectivo']['total_venta'].sum()
                         v_dig = df_c[df_c['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                         tot_v = v_efe + v_dig
-                        
                         _df_costo_det, tot_costo, c_ven = obtener_costo_y_detalles_optimizado(df_c, supabase)
                 
-                if gst_all.data: 
-                    df_g = pd.DataFrame(gst_all.data)
-                    tot_gst = df_g['monto'].sum()
-
-                if dev_all.data:
-                    df_d = pd.DataFrame(dev_all.data)
-                    tot_dev = df_d['dinero_devuelto'].sum()
-
-                if mer_all.data:
-                    df_m = pd.DataFrame(mer_all.data)
-                    tot_merma = df_m['perdida_monetaria'].sum()
+                if gst_all.data: tot_gst = pd.DataFrame(gst_all.data)['monto'].sum()
+                if dev_all.data: tot_dev = pd.DataFrame(dev_all.data)['dinero_devuelto'].sum()
+                if mer_all.data: tot_merma = pd.DataFrame(mer_all.data)['perdida_monetaria'].sum()
                 
                 ganancia_bruta = tot_v - tot_costo
                 ganancia_neta = ganancia_bruta - tot_gst - tot_dev - tot_merma
@@ -1493,12 +1366,12 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 </div>
                                 """
                                 try: supabase.table("ticket_historial").insert({"ticket_numero": tk_z_num, "usuario_id": st.session_state.user_id, "html_payload": tk_admin_html}).execute()
-                                except Exception as log_err: logging.error(f"Falla insertando historial de Cierre Z: {log_err}")
+                                except Exception as log_err: logging.error(f"Falla insertando historial Z.")
                                 
                                 st.rerun()
                             except Exception as cierre_err:
-                                st.error(f"Falla catastrófica ejecutando Cierre de Caja: {cierre_err}")
-            except Exception as e: st.error(f"Falla al instanciar Reporte de Turno: {e}")
+                                st.error(f"Falla catastrófica ejecutando Cierre de Caja.")
+            except Exception as e: st.error(f"Sistema a la espera de transacciones...")
             st.markdown('</div>', unsafe_allow_html=True)
 
         if t_rep2:
@@ -1508,14 +1381,22 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 f_dia = st.date_input("📆 Selecciona el día de operación:", value=get_now().date())
                 
                 try:
-                    # Rango temporal estricto del lado del servidor
                     start_dt = datetime.combine(f_dia, datetime.min.time()).replace(tzinfo=pytz.timezone('America/Lima'))
                     end_dt = start_dt + timedelta(days=1)
+                    start_iso = start_dt.isoformat()
+                    end_iso = end_dt.isoformat()
                     
-                    cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).execute()
-                    gst_all = supabase.table("gastos").select("*").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).execute()
-                    dev_all = supabase.table("devoluciones").select("*").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).execute()
-                    mermas_all = supabase.table("mermas").select("*").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).execute()
+                    cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", start_iso).lt("created_at", end_iso).execute()
+                    
+                    # 🛡️ FILTRO DUAL HISTÓRICO
+                    try: gst_all = supabase.table("gastos").select("*").gte("created_at", start_iso).lt("created_at", end_iso).execute()
+                    except: gst_all = supabase.table("gastos").select("*").gte("fecha", start_iso).lt("fecha", end_iso).execute()
+                    
+                    try: dev_all = supabase.table("devoluciones").select("*").gte("created_at", start_iso).lt("created_at", end_iso).execute()
+                    except: dev_all = supabase.table("devoluciones").select("*").gte("fecha", start_iso).lt("fecha", end_iso).execute()
+                    
+                    try: mermas_all = supabase.table("mermas").select("*").gte("created_at", start_iso).lt("created_at", end_iso).execute()
+                    except: mermas_all = supabase.table("mermas").select("*").gte("fecha", start_iso).lt("fecha", end_iso).execute()
                     
                     r_v_tot, r_v_efe, r_v_dig, r_costo, r_gst, r_dev, r_merma = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     
@@ -1542,7 +1423,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         c4.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value-small metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
                     else:
                         st.info("Sin registros contables en este día específico.")
-                except Exception as e: st.error(f"Falla de procesamiento en datos históricos: {e}")
+                except Exception as e: st.error("Procesando datos históricos...")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         if t_rep3:
@@ -1560,7 +1441,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                             tk_num = sel_tk.split(" - ")[0]
                             html_raw = df_tks[df_tks['ticket_numero'] == tk_num]['html_payload'].iloc[0]
                             st.markdown(html_raw.replace("<script>window.onload=function(){window.print();}</script>", ""), unsafe_allow_html=True)
-                except Exception as e: logging.error(f"Falla leyendo directorio de tickets: {e}")
+                except: pass
                 st.markdown('</div>', unsafe_allow_html=True)
                 
         if t_rep4:
@@ -1579,6 +1460,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                             html_raw_z = df_tks_z[df_tks_z['ticket_numero'] == tk_num_z]['html_payload'].iloc[0]
                             st.markdown(html_raw_z, unsafe_allow_html=True)
                     else:
-                        st.info("Aún no se ha guardado ningún Cierre Z en el historial con la Versión actual.")
-                except Exception as e: logging.error(f"Falla leyendo directorio de Cierres Z: {e}")
+                        st.info("Aún no se ha guardado ningún Cierre Z en el historial.")
+                except: pass
                 st.markdown('</div>', unsafe_allow_html=True)

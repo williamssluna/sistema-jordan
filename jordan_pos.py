@@ -97,7 +97,7 @@ st.markdown("""
 components.html("""<script>const inputs = window.parent.document.querySelectorAll('input[type="text"]'); if(inputs.length > 0) { inputs[0].focus(); }</script>""", height=0)
 
 # ==========================================
-# 4. MOTOR MATEMÁTICO ANTI-ERRORES (S/. 0.00 FIX)
+# 4. FUNCIONES MAESTRAS
 # ==========================================
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [], 'is_admin': False,
@@ -133,16 +133,16 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z").tz_convert('America/Lima')
 
-# LIMPIADOR DE IDs: Transforma 123.0 en 123 para evitar desconexiones
+# 🧹 LIMPIADOR DE IDs: Transforma 123.0 en 123
 def clean_id(val):
     try:
         if pd.isna(val): return ""
-        v_str = str(val)
+        v_str = str(val).strip()
         if v_str.endswith(".0"): return v_str[:-2]
         return v_str
-    except: return str(val)
+    except: return str(val).strip()
 
-# MOTOR DE COSTOS BLINDADO
+# 🔥 MOTOR DE COSTOS BASADO EN TU LÓGICA MERGE
 def obtener_costo_y_detalles(df_cab):
     if df_cab is None or df_cab.empty: return pd.DataFrame(), 0.0, 0
     try:
@@ -154,33 +154,49 @@ def obtener_costo_y_detalles(df_cab):
         if not valid_ids: return pd.DataFrame(), 0.0, 0
 
         # Descargar detalles
-        res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").order("id", desc=True).limit(15000).execute()
+        res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad").execute()
         if not res_det.data: return pd.DataFrame(), 0.0, 0
         
         df_det = pd.DataFrame(res_det.data)
-        df_det['venta_id_str'] = df_det['venta_id'].apply(clean_id) # Limpia los IDs de la base de datos
+        df_det['venta_id_str'] = df_det['venta_id'].apply(clean_id)
         
-        # Filtro milimétrico en memoria
+        # Filtrar solo las ventas requeridas
         df_filt = df_det[df_det['venta_id_str'].isin(valid_ids)].copy()
         if df_filt.empty: return pd.DataFrame(), 0.0, 0
         
-        res_prod = supabase.table("productos").select("codigo_barras, costo_compra, nombre").execute()
-        c_map, n_map = {}, {}
-        if res_prod.data:
-            for p in res_prod.data:
-                c_map[str(p['codigo_barras'])] = float(p.get('costo_compra') or 0.0)
-                n_map[str(p['codigo_barras'])] = str(p.get('nombre') or 'Producto Desconocido')
+        # Descargar productos (Para el MERGE)
+        res_prod = supabase.table("productos").select("codigo_barras, nombre, costo_compra").execute()
+        if not res_prod.data: return df_filt, 0.0, int(df_filt['cantidad'].sum())
         
-        df_filt['costo_unit'] = df_filt['producto_id'].astype(str).apply(lambda x: c_map.get(x, 0.0))
-        df_filt['nombre_prod'] = df_filt['producto_id'].astype(str).apply(lambda x: n_map.get(x, 'N/A'))
+        df_prod = pd.DataFrame(res_prod.data)
         
-        df_filt['cantidad'] = pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0)
-        df_filt['costo_unit'] = pd.to_numeric(df_filt['costo_unit'], errors='coerce').fillna(0)
+        # 🧩 PREPARACIÓN PARA EL MERGE EXACTO
+        df_filt['producto_id_clean'] = df_filt['producto_id'].apply(clean_id)
+        df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].apply(clean_id)
         
-        costo_total = float((df_filt['costo_unit'] * df_filt['cantidad']).sum())
-        cant_total = int(df_filt['cantidad'].sum())
+        # 🔗 MERGE ESTILO PANDAS (Tu Solución)
+        df_merge = df_filt.merge(
+            df_prod,
+            left_on="producto_id_clean",
+            right_on="codigo_barras_clean",
+            how="left"
+        )
         
-        return df_filt, costo_total, cant_total
+        # Limpieza de nulos post-merge
+        df_merge['cantidad'] = pd.to_numeric(df_merge['cantidad'], errors='coerce').fillna(0)
+        df_merge['costo_compra'] = pd.to_numeric(df_merge['costo_compra'], errors='coerce').fillna(0)
+        
+        # Cálculo del costo total
+        df_merge['costo_total_linea'] = df_merge['cantidad'] * df_merge['costo_compra']
+        
+        # Variables de salida estandarizadas para el resto del ERP
+        df_merge['costo_unit'] = df_merge['costo_compra']
+        df_merge['nombre_prod'] = df_merge['nombre'].fillna('Producto Desconocido')
+        
+        costo_total = float(df_merge['costo_total_linea'].sum())
+        cant_total = int(df_merge['cantidad'].sum())
+        
+        return df_merge, costo_total, cant_total
     except Exception as e:
         return pd.DataFrame(), 0.0, 0
 
@@ -281,8 +297,8 @@ if st.session_state.logged_in and st.session_state.is_admin:
     st.sidebar.divider()
     with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)", expanded=False):
         st.error("Esto borrará TODA la información operativa para iniciar en limpio.")
-        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v16")
-        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v16"):
+        confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_admin_v17")
+        if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_admin_v17"):
             if confirm_text == "RESETEAR":
                 with st.spinner("Borrando base de datos..."):
                     execute_factory_reset()
@@ -659,7 +675,7 @@ elif menu == "🔄 DEVOLUCIONES":
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# 🤝 MÓDULO 3: CLIENTES (CRM) - ESCUDO DINÁMICO
+# 🤝 MÓDULO 3: CLIENTES (CRM)
 # ==========================================
 elif menu == "🤝 CLIENTES (CRM)":
     st.markdown('<div class="main-header">Base de Datos de Clientes y CRM</div>', unsafe_allow_html=True)
@@ -670,15 +686,14 @@ elif menu == "🤝 CLIENTES (CRM)":
         try:
             cls_df = load_data("clientes")
             if not cls_df.empty: 
-                # ESCUDO DINÁMICO CONTRA ERRORES DE COLUMNA
                 cols_disponibles = cls_df.columns.tolist()
-                cols_a_mostrar = [c for c in ['dni_ruc', 'nombre', 'telefono', 'correo', 'created_at'] if c in cols_disponibles]
-                
-                if not cols_a_mostrar: cols_a_mostrar = cols_disponibles
+                cols_a_mostrar = ['dni_ruc', 'nombre']
+                if 'telefono' in cols_disponibles: cols_a_mostrar.append('telefono')
+                if 'correo' in cols_disponibles: cols_a_mostrar.append('correo')
+                if 'created_at' in cols_disponibles: cols_a_mostrar.append('created_at')
 
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
-                
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
                 
                 st.divider()
@@ -691,7 +706,7 @@ elif menu == "🤝 CLIENTES (CRM)":
                             supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
                             st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
             else: st.info("No hay clientes registrados en la Base de Datos.")
-        except Exception as e: st.error(f"Error cargando clientes. El servidor respondió: {e}")
+        except Exception as e: st.error(f"Error procesando clientes: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with t2:
@@ -885,7 +900,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                     df_det, _, _ = obtener_costo_y_detalles(df_ca_dia)
                     if not df_det.empty:
                         res_alm = df_det.groupby(['producto_id', 'nombre_prod']).agg(
-                            Unidades_Vendidas=('cantidad', 'sum'), Dinero_Generado=('subtotal', 'sum')
+                            Unidades_Vendidas=('cantidad', 'sum'), Dinero_Generado=('costo_total_linea', 'sum')
                         ).reset_index().sort_values(by='Unidades_Vendidas', ascending=False)
                         st.dataframe(res_alm, use_container_width=True)
                     else: st.info("No hay detalles de venta registrados para esta fecha.")
@@ -938,7 +953,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
         if len(lista) > 2: return f"Varios ({len(lista)})"
         return ", ".join(lista)
         
-    t_u1, t_u2, t_edit, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla", "➕ Nuevo", "✏️ Editar", "🔑 Clave", "⚙️ Permisos", "🗑️ Baja", "📊 Auditoría"])
+    t_u1, t_u2, t_edit, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla", "➕ Nuevo", "✏️ Editar Perfil", "🔑 Clave", "⚙️ Permisos", "🗑️ Baja", "📊 Auditoría"])
     
     usrs_db = supabase.table("usuarios").select("*").execute()
     df_u, df_activos, df_inactivos = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -1023,8 +1038,8 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
             if not df_activos.empty:
                 v_b = df_activos[df_activos['usuario'] != 'admin']['usuario'].tolist()
                 if v_b:
-                    u_del = st.selectbox("Gestionar Usuario:", v_b)
-                    if st.button("🗑️ INHABILITAR (Mantener Historial)"):
+                    u_del = st.selectbox("Suspender Acceso (Despido/Falta):", v_b)
+                    if st.button("🗑️ INHABILITAR USUARIO"):
                         supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute(); st.rerun()
                     st.divider()
                     if st.button("❌ ELIMINAR DEFINITIVAMENTE"):
@@ -1105,7 +1120,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                 st.write("**Desempeño Financiero (Productividad)**")
                 c4, c5, c6 = st.columns(3)
                 c4.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero a Caja</div><div class='metric-value-small metric-blue'>S/. {v_hoy_ventas:.2f}</div></div>", unsafe_allow_html=True)
-                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>- S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
                 c6.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>UTILIDAD GENERADA</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
 
                 st.write("**Control de Asistencia y Turnos**")
@@ -1382,6 +1397,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                             html_raw_z = df_tks_z[df_tks_z['ticket_numero'] == tk_num_z]['html_payload'].iloc[0]
                             st.markdown(html_raw_z, unsafe_allow_html=True)
                     else:
-                        st.info("Aún no se ha guardado ningún Cierre Z en el historial con la Versión 15.0.")
+                        st.info("Aún no se ha guardado ningún Cierre Z en el historial con la Versión actual.")
                 except: pass
                 st.markdown('</div>', unsafe_allow_html=True)

@@ -12,16 +12,12 @@ import pytz
 import uuid
 import logging
 
-# Configuración del logger para rastrear errores silenciosos
+# Configuración del logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==========================================
-# 1. GESTIÓN HORARIA NATIVA (ZONA PERÚ)
+# 1. GESTIÓN HORARIA NATIVA
 # ==========================================
-os.environ['TZ'] = 'America/Lima'
-if hasattr(time, 'tzset'):
-    time.tzset()
-
 def get_now():
     return datetime.now(pytz.timezone('America/Lima'))
 
@@ -114,19 +110,19 @@ for key, value in keys_to_init.items():
 @st.cache_data(ttl=300)
 def load_data_cached(table):
     try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
-    except Exception as e: return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def load_data(table):
     try: return pd.DataFrame(supabase.table(table).select("*").execute().data)
-    except Exception as e: return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def get_lista_usuarios():
     try: return supabase.table("usuarios").select("id, nombre_completo, usuario").eq("estado", "Activo").execute().data or []
-    except Exception as e: return []
+    except: return []
 
 def registrar_kardex(producto_id, usuario_id, tipo_movimiento, cantidad, motivo):
     try: supabase.table("movimientos_inventario").insert({"producto_id": str(producto_id), "usuario_id": usuario_id, "tipo_movimiento": tipo_movimiento, "cantidad": cantidad, "motivo": motivo}).execute()
-    except Exception as e: pass
+    except: pass
 
 def get_last_cierre_dt():
     try:
@@ -134,7 +130,7 @@ def get_last_cierre_dt():
         if c.data and 'fecha_cierre' in c.data[0]:
             dt = pd.to_datetime(c.data[0]['fecha_cierre'], utc=True)
             return dt.tz_convert('America/Lima')
-    except Exception as e: pass
+    except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True).tz_convert('America/Lima')
 
 def is_valid_uuid(val):
@@ -152,7 +148,6 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR COGS BLINDADO CONTRA COLAPSO DE BASE DE DATOS (FIX DEFINITIVO 0.00)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
@@ -164,32 +159,28 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         
         if not raw_ids: return pd.DataFrame(), 0.0, 0
 
-        # SEGREGACIÓN MILIMÉTRICA: Previene que un ID "AJ-" rompa la consulta de los IDs enteros
         uuid_list = [x for x in raw_ids if is_valid_uuid(x)]
         int_list = [x for x in raw_ids if x.isdigit()]
         text_list = [x for x in raw_ids if x not in uuid_list and x not in int_list]
         
         detalles_data = []
         
-        # 1. Consultar UUIDs válidos
         if uuid_list:
             try:
                 res_uuid = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", uuid_list).execute()
                 if hasattr(res_uuid, 'data') and res_uuid.data: detalles_data.extend(res_uuid.data)
             except: pass
             
-        # 2. Consultar Enteros (Los IDs reales que salvan tu sistema)
         if int_list:
             try:
                 res_int = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", [int(x) for x in int_list]).execute()
                 if hasattr(res_int, 'data') and res_int.data: detalles_data.extend(res_int.data)
             except:
-                try: # Plan B si la columna es texto
+                try:
                     res_int2 = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", int_list).execute()
                     if hasattr(res_int2, 'data') and res_int2.data: detalles_data.extend(res_int2.data)
                 except: pass
                 
-        # 3. Consultar Textos mixtos ("AJ-...")
         if text_list:
             try:
                 res_text = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", text_list).execute()
@@ -201,7 +192,6 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
             return pd.DataFrame(), 0.0, cant_total
 
         df_filt = pd.DataFrame(detalles_data)
-        
         df_filt['producto_id_clean'] = df_filt['producto_id'].astype(str).str.strip()
         df_filt['producto_id_clean'] = df_filt['producto_id_clean'].str.replace(r'\.0$', '', regex=True)
         
@@ -261,7 +251,7 @@ def procesar_codigo_venta(code):
                 return True
             else: st.error("❌ Sin stock disponible.")
         else: st.warning("⚠️ Producto no encontrado.")
-    except Exception as e: st.error("Error de base de datos.")
+    except: st.error("Error de base de datos.")
     return False
 
 def execute_factory_reset():
@@ -296,7 +286,7 @@ with st.sidebar.expander("⌚ Marcar Asistencia", expanded=True):
                         supabase.table("asistencia").insert({"usuario_id": u_d.data[0]['id'], "tipo_marcacion": tipo}).execute()
                         st.success(f"✅ Asistencia registrada exitosamente.")
                     else: st.error("❌ Credenciales inválidas.")
-                except Exception as e: st.error("Error al conectar al reloj.")
+                except: pass
 
 st.sidebar.divider()
 
@@ -355,7 +345,7 @@ if st.session_state.logged_in:
 menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL (RESTAURADO A TU DISEÑO FAVORITO)
+# 📈 MÓDULO 0: DASHBOARD GENERAL 
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
     st.markdown('<div class="main-header">Panel de Inteligencia Comercial</div>', unsafe_allow_html=True)
@@ -416,7 +406,7 @@ if menu == "📈 DASHBOARD GENERAL":
                     df_p = pd.DataFrame(p_db.data)
                     df_criticos = df_p[df_p['stock_actual'] <= 20].sort_values(by='stock_actual')
                     if not df_criticos.empty:
-                        st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos. Requieren reabastecimiento.")
+                        st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos.")
                         with st.expander("Ver lista de productos a comprar"):
                             st.dataframe(df_criticos[['nombre', 'stock_actual']].rename(columns={'nombre':'Producto', 'stock_actual': 'Stock Restante'}), hide_index=True)
                     else: st.success("Todo el inventario supera las 20 unidades.")
@@ -451,7 +441,7 @@ if menu == "📈 DASHBOARD GENERAL":
                 st.plotly_chart(fig_combo, use_container_width=True)
 
         else: st.info("No hay ventas registradas aún.")
-    except Exception as e: st.error(f"Cargando módulos... {e}")
+    except Exception as e: st.error(f"Cargando módulos...")
 
 # ==========================================
 # 🛒 MÓDULO 1: VENTAS (POS)
@@ -563,9 +553,9 @@ elif menu == "🛒 VENTAS (POS)":
                     if st.button("Guardar y Seleccionar"):
                         try:
                             supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
-                            st.success("Cliente guardado."); time.sleep(2); st.rerun()
+                            st.success("Cliente guardado. Desmarca la casilla y búscalo en la lista."); time.sleep(2); st.rerun()
                         except Exception as e:
-                            st.error(f"Fallo al guardar cliente: Verifica si el DNI ya existe.")
+                            st.error(f"Fallo al guardar cliente.")
 
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
@@ -603,23 +593,14 @@ elif menu == "🛒 VENTAS (POS)":
                             v_id = t_num 
                             if hasattr(res_insert, 'data') and res_insert.data: 
                                 row_v = res_insert.data[0]
-                                v_id_val = row_v.get('id')
-                                v_id = str(v_id_val).strip() if v_id_val is not None else t_num
+                                v_id = str(row_v.get('id', t_num)).strip()
                             
                             items_html = ""
                             for it in st.session_state.carrito:
-                                # ESCUDO VISIBLE: Muestra alerta si falla el insert (Previene Costo 0.00 silencioso)
                                 try: 
-                                    supabase.table("ventas_detalle").insert({
-                                        "venta_id": v_id, 
-                                        "producto_id": str(it['id']), 
-                                        "cantidad": it['cant'], 
-                                        "precio_unitario": float(it['precio']), 
-                                        "subtotal": float(it['precio'] * it['cant'])
-                                    }).execute()
+                                    supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": str(it['id']), "cantidad": it['cant'], "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']}).execute()
                                 except Exception as e_det: 
-                                    st.error(f"⚠️ Atención: Fallo guardando detalle en nube. La venta es válida pero la auditoría del producto {it['nombre']} falló. Llama a Soporte.")
-                                    logging.error(f"Fallo detalle: {e_det}")
+                                    st.error(f"⚠️ Error base de datos en detalle: {it['nombre']}")
                                 
                                 try:
                                     supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
@@ -645,7 +626,7 @@ elif menu == "🛒 VENTAS (POS)":
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error de Red o Facturación: {e}")
+                        except Exception as e: st.error(f"🚨 Error en facturación.")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -731,7 +712,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 registrar_kardex(p['codigo_barras'], usr_id, "INGRESO_DEVOLUCION", d_cant, m_dev)
                                 st.success("✅ Devuelto exitosamente."); time.sleep(1); st.rerun()
                             else: st.error("Falta motivo o usuario autorizador.")
-            except Exception as e: st.error(f"Fallo de red al conectar.")
+            except Exception as e: st.error(f"Fallo de red.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -768,7 +749,7 @@ elif menu == "🤝 CLIENTES (CRM)":
                                 supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
                                 st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
                             except Exception as e: st.error(f"Error al borrar cliente.")
-            else: st.info("No hay clientes registrados en la Base de Datos.")
+            else: st.info("No hay clientes registrados.")
         except Exception as e: st.error(f"Error procesando clientes.")
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -819,7 +800,6 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
             start_dt = datetime.combine(f_gasto_dia, datetime.min.time()).replace(tzinfo=pytz.timezone('America/Lima'))
             end_dt = start_dt + timedelta(days=1)
             
-            # FILTRO SEGURO DUAL
             try:
                 gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).order("id", desc=True).execute()
             except Exception:
@@ -898,7 +878,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                                         registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
                                         st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
                                     except Exception as db_err:
-                                        st.error(f"Falla crítica: Asegúrate de ejecutar el código SQL para activar RPC.")
+                                        st.error(f"Falla crítica: Base de datos denegó operación.")
         except Exception as e: st.error(f"Error cargando inventario.")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1019,7 +999,7 @@ elif menu == "⚠️ MERMAS" and ("mermas" in st.session_state.user_perms or st.
                                 registrar_kardex(m_cod, st.session_state.user_id, "SALIDA_MERMA", m_cant, m_mot)
                                 st.success("✅ Baja documentada exitosamente."); time.sleep(1); st.rerun()
                             except Exception as e_rpc:
-                                st.error(f"Falla de base de datos registrando merma.")
+                                st.error(f"Falla en registro de merma.")
         except Exception as e: st.error(f"Falla cargando datos.")
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1208,7 +1188,6 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                 
                 if cab_v.data:
                     df_cv_dia = pd.DataFrame(cab_v.data)
-                    
                     if not df_cv_dia.empty:
                         v_hoy_ventas = df_cv_dia['total_venta'].sum()
                         _df_rrhh_det, v_hoy_costo, _ = obtener_costo_y_detalles_optimizado(df_cv_dia, supabase)
@@ -1246,6 +1225,23 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
         tk = st.session_state.ticket_cierre
         st.success("✅ Reporte Z Generado Correctamente.")
         
+        # EL TICKET AHORA MUESTRA LA RENTABILIDAD Y EL PERSONAL (SI ERES ADMIN)
+        if es_gerencia:
+            financiero_html = f"""
+            <b>📉 INVERSIÓN Y UTILIDAD:</b><br>
+            Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>
+            Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>
+            <b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>
+            --------------------------------<br>
+            """
+        else:
+            financiero_html = f"""
+            <b>📉 SALIDAS DE CAJA:</b><br>
+            Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>
+            Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>
+            --------------------------------<br>
+            """
+
         ticket_cajero_html = f"""
         <div class="ticket-termico">
             <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>
@@ -1258,11 +1254,11 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
             - En Digital: S/. {tk['ventas_digital']:.2f}<br>
             Volumen Venta: {tk['cant_vendida']} items.<br>
             --------------------------------<br>
-            <b>📉 SALIDAS DE CAJA:</b><br>
-            Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>
-            Devoluciones: S/. {tk['tot_dev']:.2f}<br>
-            --------------------------------<br>
-            <b>🏦 EFECTIVO A ENTREGAR AL DUEÑO: S/. {tk['caja_efectivo']:.2f}</b><br>
+            {financiero_html}
+            {tk.get('personal_html', '')}
+            <b>🏦 RENDICIÓN DE CAJA:</b><br>
+            EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>
+            PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>
             --------------------------------<br>
             {tk['alertas_stock']}
         </div>
@@ -1291,7 +1287,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 
                 cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", lc_iso).execute()
                 
-                # 🛡️ FILTRO DUAL INTELIGENTE (Solución Error 42703: column gastos.created_at does not exist)
                 try: gst_all = supabase.table("gastos").select("*").gte("created_at", lc_iso).execute()
                 except: gst_all = supabase.table("gastos").select("*").gte("fecha", lc_iso).execute()
                 
@@ -1352,6 +1347,36 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                             try:
                                 supabase.table("cierres_caja").insert({"total_ventas": tot_v, "utilidad": ganancia_neta}).execute()
                                 
+                                # CÁLCULO DE PERSONAL Y HORAS TRABAJADAS EN EL TURNO
+                                personal_html = ""
+                                ast_shift = supabase.table("asistencia").select("*, usuarios(nombre_completo)").gte("timestamp", lc_iso).execute()
+                                if hasattr(ast_shift, 'data') and ast_shift.data:
+                                    df_ast = pd.DataFrame(ast_shift.data)
+                                    df_ast['ts'] = pd.to_datetime(df_ast['timestamp'], utc=True).dt.tz_convert('America/Lima')
+                                    df_ast = df_ast.sort_values('ts')
+                                    
+                                    horas_por_usuario = {}
+                                    nombres_usuarios = {}
+                                    for uid, group in df_ast.groupby('usuario_id'):
+                                        nom = group.iloc[0]['usuarios'].get('nombre_completo', f'ID:{uid}') if isinstance(group.iloc[0]['usuarios'], dict) else f'ID:{uid}'
+                                        nombres_usuarios[uid] = nom
+                                        total_secs = 0
+                                        last_in = None
+                                        for _, row in group.iterrows():
+                                            if row['tipo_marcacion'] == 'Ingreso': last_in = row['ts']
+                                            elif row['tipo_marcacion'] == 'Salida' and last_in is not None:
+                                                total_secs += (row['ts'] - last_in).total_seconds()
+                                                last_in = None
+                                        if last_in is not None:
+                                            total_secs += (get_now() - last_in).total_seconds()
+                                        horas_por_usuario[uid] = total_secs / 3600.0
+                                    
+                                    if horas_por_usuario:
+                                        personal_html = "<b>👥 PERSONAL EN TURNO:</b><br>"
+                                        for uid, hrs in horas_por_usuario.items():
+                                            personal_html += f"- {nombres_usuarios[uid]}: {hrs:.1f} Hrs<br>"
+                                        personal_html += "--------------------------------<br>"
+
                                 bajos = supabase.table("productos").select("nombre, stock_actual").lte("stock_actual", 20).execute()
                                 alert_html = ""
                                 if bajos.data:
@@ -1363,9 +1388,11 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                     'fecha': get_now().strftime('%d/%m/%Y %I:%M %p'),
                                     'cant_vendida': c_ven, 'tot_ventas': tot_v, 'ventas_efectivo': v_efe, 'ventas_digital': v_dig,
                                     'capital_inv': tot_costo, 'tot_dev': tot_dev, 'tot_merma': tot_merma, 'tot_gastos': tot_gst,
-                                    'ganancia_bruta': ganancia_bruta, 'caja_efectivo': caja_efectivo, 'utilidad': ganancia_neta, 'alertas_stock': alert_html
+                                    'ganancia_bruta': ganancia_bruta, 'caja_efectivo': caja_efectivo, 'utilidad': ganancia_neta, 'alertas_stock': alert_html,
+                                    'personal_html': personal_html
                                 }
                                 
+                                # TICKET FANTASMA PARA EL ADMIN EN EL HISTORIAL
                                 tk_z_num = f"Z-{int(time.time())}"
                                 tk_admin_html = f"""
                                 <div class="ticket-termico">
@@ -1379,17 +1406,19 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                     - Digital: S/. {v_dig:.2f}<br>
                                     Volumen: {c_ven} items.<br>
                                     --------------------------------<br>
-                                    <b>📉 COSTOS Y SALIDAS CAJA:</b><br>
-                                    Capital Inv: S/. {tot_costo:.2f}<br>
+                                    <b>📉 INVERSIÓN Y COSTOS:</b><br>
+                                    Costo Mercadería: S/. {tot_costo:.2f}<br>
                                     Gastos Caja: S/. {tot_gst:.2f}<br>
-                                    Mermas: S/. {tot_merma:.2f}<br>
-                                    Devoluciones: S/. {tot_dev:.2f}<br>
+                                    Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>
                                     --------------------------------<br>
                                     <b>📊 RENDIMIENTO NETO:</b><br>
                                     Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>
-                                    <b>UTILIDAD PURA: S/. {ganancia_neta:.2f}</b><br>
+                                    <b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>
                                     --------------------------------<br>
-                                    <b>🏦 EFECTIVO RENDIR: S/. {caja_efectivo:.2f}</b><br>
+                                    {personal_html}
+                                    <b>🏦 RENDICIÓN DE CAJA:</b><br>
+                                    EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>
+                                    PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>
                                     --------------------------------<br>
                                 </div>
                                 """
@@ -1416,7 +1445,6 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                     
                     cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", start_iso).lt("created_at", end_iso).execute()
                     
-                    # 🛡️ FILTRO DUAL HISTÓRICO
                     try: gst_all = supabase.table("gastos").select("*").gte("created_at", start_iso).lt("created_at", end_iso).execute()
                     except: gst_all = supabase.table("gastos").select("*").gte("fecha", start_iso).lt("fecha", end_iso).execute()
                     

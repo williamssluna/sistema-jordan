@@ -50,7 +50,7 @@ def verify_password(input_password, stored_password):
     return input_password == stored_password
 
 # ==========================================
-# 3. DISEÑO VISUAL UX/UI PREMIUM (NUEVOS BOTONES)
+# 3. DISEÑO VISUAL UX/UI PREMIUM
 # ==========================================
 st.markdown("""
     <style>
@@ -59,7 +59,6 @@ st.markdown("""
     .main-header { font-size: 26px; font-weight: 800; color: #1e293b; padding: 10px 0px 20px 0px; border-bottom: 2px solid #e2e8f0; margin-bottom: 25px;}
     .css-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin-bottom: 15px; }
     
-    /* ESTÉTICA DE TARJETAS (METRICAS) */
     .metric-box { background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; transition: all 0.2s ease;}
     .metric-box:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.1); transform: translateY(-2px); }
     .metric-title { font-size: 13px; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;}
@@ -72,60 +71,24 @@ st.markdown("""
     .metric-blue { color: #2563eb; }
     .metric-purple { color: #8b5cf6; }
     
-    /* 🚀 NUEVO: DISEÑO DE PESTAÑAS SUPERIORES COMO BOTONES */
     button[data-baseweb="tab"] {
-        background-color: #f1f5f9 !important;
-        border-radius: 8px 8px 0px 0px !important;
-        border: 1px solid #e2e8f0 !important;
-        border-bottom: none !important;
-        padding: 10px 20px !important;
-        margin-right: 5px !important;
-        font-weight: 700 !important;
-        color: #475569 !important;
-        transition: all 0.3s ease !important;
-    }
-    button[data-baseweb="tab"]:hover {
-        background-color: #e2e8f0 !important;
-        color: #1e293b !important;
+        background-color: #f1f5f9 !important; border-radius: 8px 8px 0px 0px !important;
+        border: 1px solid #e2e8f0 !important; border-bottom: none !important;
+        padding: 10px 20px !important; margin-right: 5px !important;
+        font-weight: 700 !important; color: #475569 !important; transition: all 0.3s ease !important;
     }
     button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #2563eb !important;
-        color: white !important;
-        border-color: #2563eb !important;
-        box-shadow: 0px -3px 5px rgba(37, 99, 235, 0.2) !important;
+        background-color: #2563eb !important; color: white !important; border-color: #2563eb !important;
     }
     
-    /* 🚀 NUEVO: DISEÑO DEL MENÚ LATERAL COMO BOTONES */
-    div[role="radiogroup"] > label {
-        background-color: white;
-        padding: 12px 15px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-        border: 1px solid #e2e8f0;
-        transition: all 0.2s ease;
-        cursor: pointer;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
-    div[role="radiogroup"] > label:hover {
-        background-color: #f8fafc;
-        border-color: #cbd5e1;
-        transform: translateX(4px);
-    }
-    div[role="radiogroup"] > label[data-checked="true"] {
-        background-color: #2563eb !important;
-        border-color: #2563eb !important;
-        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.3);
-        transform: translateX(4px);
-    }
-    div[role="radiogroup"] > label[data-checked="true"] p {
-        color: white !important;
-        font-weight: 800 !important;
-    }
+    div[role="radiogroup"] > label { background-color: white; padding: 12px 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e2e8f0; transition: all 0.2s ease; cursor: pointer;}
+    div[role="radiogroup"] > label[data-checked="true"] { background-color: #2563eb !important; border-color: #2563eb !important; }
+    div[role="radiogroup"] > label[data-checked="true"] p { color: white !important; font-weight: 800 !important; }
     
-    /* Ticket y Botones Base */
     .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #cbd5e1; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2; font-size: 13px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);}
     .linea-corte { text-align: center; margin: 25px 0; border-bottom: 2px dashed #94a3b8; color: #64748b; font-size: 12px; font-weight: bold;}
     .linea-corte span { background: var(--bg-color); padding: 0 10px; }
+    .stButton>button { border-radius: 6px; font-weight: 600; transition: all 0.2s;}
     .btn-checkout>button { background-color: #2563eb; color: white; height: 3.5em; font-size: 16px; border: none; border-radius: 8px;}
     .btn-checkout>button:hover { background-color: #1d4ed8; color: white;}
     </style>
@@ -166,7 +129,6 @@ def get_last_cierre_dt():
     except: pass
     return pd.to_datetime("2000-01-01T00:00:00Z").tz_convert('America/Lima')
 
-# 🛡️ MOTOR MATEMÁTICO BLINDADO
 def obtener_costo_y_detalles(df_cab):
     if df_cab is None or df_cab.empty: return pd.DataFrame(), 0.0, 0
     try:
@@ -176,14 +138,22 @@ def obtener_costo_y_detalles(df_cab):
         valid_ids = list(set(valid_ids))
         if not valid_ids: return pd.DataFrame(), 0.0, 0
 
-        res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").order("id", desc=True).limit(15000).execute()
-        if not res_det.data: return pd.DataFrame(), 0.0, 0
-        
-        df_det = pd.DataFrame(res_det.data)
-        df_det['venta_id_str'] = df_det['venta_id'].astype(str)
-        
-        df_filt = df_det[df_det['venta_id_str'].isin(valid_ids)].copy()
-        if df_filt.empty: return pd.DataFrame(), 0.0, 0
+        det_data = []
+        for i in range(0, len(valid_ids), 100):
+            chunk = valid_ids[i:i+100]
+            try:
+                res = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", chunk).execute()
+                if res.data: det_data.extend(res.data)
+            except:
+                int_chunk = [int(x) for x in chunk if x.isdigit()]
+                if int_chunk:
+                    try:
+                        res = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", int_chunk).execute()
+                        if res.data: det_data.extend(res.data)
+                    except: pass
+            
+        if not det_data: return pd.DataFrame(), 0.0, 0
+        df_det = pd.DataFrame(det_data)
         
         res_prod = supabase.table("productos").select("codigo_barras, costo_compra, nombre").execute()
         c_map, n_map = {}, {}
@@ -192,16 +162,16 @@ def obtener_costo_y_detalles(df_cab):
                 c_map[str(p['codigo_barras'])] = float(p.get('costo_compra') or 0.0)
                 n_map[str(p['codigo_barras'])] = str(p.get('nombre') or 'Producto Desconocido')
         
-        df_filt['costo_unit'] = df_filt['producto_id'].astype(str).apply(lambda x: c_map.get(x, 0.0))
-        df_filt['nombre_prod'] = df_filt['producto_id'].astype(str).apply(lambda x: n_map.get(x, 'N/A'))
+        df_det['costo_unit'] = df_det['producto_id'].astype(str).apply(lambda x: c_map.get(x, 0.0))
+        df_det['nombre_prod'] = df_det['producto_id'].astype(str).apply(lambda x: n_map.get(x, 'N/A'))
         
-        df_filt['cantidad'] = pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0)
-        df_filt['costo_unit'] = pd.to_numeric(df_filt['costo_unit'], errors='coerce').fillna(0)
+        df_det['cantidad'] = pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0)
+        df_det['costo_unit'] = pd.to_numeric(df_det['costo_unit'], errors='coerce').fillna(0)
         
-        costo_total = float((df_filt['costo_unit'] * df_filt['cantidad']).sum())
-        cant_total = int(df_filt['cantidad'].sum())
+        costo_total = float((df_det['costo_unit'] * df_det['cantidad']).sum())
+        cant_total = int(df_det['cantidad'].sum())
         
-        return df_filt, costo_total, cant_total
+        return df_det, costo_total, cant_total
     except Exception as e:
         return pd.DataFrame(), 0.0, 0
 
@@ -228,7 +198,6 @@ def procesar_codigo_venta(code):
     except: st.error("Error de base de datos.")
     return False
 
-# 🧨 ALGORITMO DE RESET DE FÁBRICA REPARADO
 def execute_factory_reset():
     tables = [
         ("ventas_detalle", "id"), ("ticket_historial", "id"), ("movimientos_inventario", "id"),
@@ -243,7 +212,6 @@ def execute_factory_reset():
                 row = res.data[0]
                 pk = 'id' if 'id' in row else default_pk
                 if pk not in row and 'ticket_numero' in row: pk = 'ticket_numero'
-                
                 all_res = supabase.table(t).select(pk, "usuario" if t=="usuarios" else pk).execute()
                 if all_res.data:
                     for r in all_res.data:
@@ -300,12 +268,10 @@ else:
         st.session_state.is_admin = False
         st.rerun()
 
-# ⚠️ ZONA DE PELIGRO (SOLO ADMIN) - ERROR DE DUPLICADO CORREGIDO AQUI
 if st.session_state.logged_in and st.session_state.is_admin:
     st.sidebar.divider()
     with st.sidebar.expander("⚠️ ZONA DE PRUEBAS (RESET)", expanded=False):
         st.error("Esto borrará TODA la información operativa para iniciar en limpio.")
-        # Agregamos llaves únicas (keys) para que Streamlit no confunda este input con otros
         confirm_text = st.text_input("Escribe 'RESETEAR' para confirmar:", key="input_reset_db_admin")
         if st.button("🔥 FORMATEAR SISTEMA", type="primary", key="btn_reset_db_admin"):
             if confirm_text == "RESETEAR":
@@ -323,7 +289,7 @@ if st.session_state.logged_in:
     if "reportes" in p or "cierre_caja" in p or st.session_state.is_admin: menu_options.insert(0, "📈 DASHBOARD GENERAL")
     menu_options.append("🤝 CLIENTES (CRM)")
     if "inventario_ver" in p or st.session_state.is_admin: menu_options.append("📦 ALMACÉN Y COMPRAS")
-    if "reportes" in p or st.session_state.is_admin: menu_options.append("💵 GASTOS OPERATIVOS")
+    if "reportes" in p or "cierre_caja" in p or st.session_state.is_admin: menu_options.append("💵 GASTOS OPERATIVOS")
     if "mermas" in p or st.session_state.is_admin: menu_options.append("⚠️ MERMAS")
     if "reportes" in p or "cierre_caja" in p or st.session_state.is_admin: menu_options.append("📊 REPORTES Y CIERRE")
     if "gestion_usuarios" in p or st.session_state.is_admin: menu_options.append("👥 RRHH (Vendedores)")
@@ -360,7 +326,6 @@ if menu == "📈 DASHBOARD GENERAL":
                 df_a = pd.DataFrame(ast_db.data)
                 df_a['ts'] = pd.to_datetime(df_a['timestamp'], utc=True).dt.tz_convert('America/Lima')
                 df_a_hoy = df_a[df_a['ts'].dt.date == hoy].sort_values('ts')
-                
                 if not df_a_hoy.empty:
                     last_actions = df_a_hoy.groupby('usuario_id').last()
                     activos = last_actions[last_actions['tipo_marcacion'] == 'Ingreso']
@@ -369,61 +334,64 @@ if menu == "📈 DASHBOARD GENERAL":
                         nom = u_dict.get('nombre_completo', f'ID:{uid}') if isinstance(u_dict, dict) else f'ID:{uid}'
                         personal_hoy.append(nom)
 
+            # 🛡️ PROTECCIÓN DE ROL: Ocultar utilidad si el vendedor no tiene permiso "reportes"
+            es_gerencia = st.session_state.is_admin or "reportes" in st.session_state.user_perms
+
             st.write("#### ⚡ Resumen Directivo")
             c1, c2, c3, c4 = st.columns(4)
             c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas de Hoy</div><div class='metric-value metric-green'>S/. {v_hoy:.2f}</div></div>", unsafe_allow_html=True)
             c2.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Ayer</div><div class='metric-value metric-blue'>S/. {v_ayer:.2f}</div></div>", unsafe_allow_html=True)
             
-            _, util_hoy_costo, _ = obtener_costo_y_detalles(df_hoy)
-            c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>S/. {v_hoy - util_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
-            
+            if es_gerencia:
+                _, util_hoy_costo, _ = obtener_costo_y_detalles(df_hoy)
+                c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>S/. {v_hoy - util_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
+            else:
+                c3.markdown(f"<div class='metric-box'><div class='metric-title'>Utilidad Neta Hoy</div><div class='metric-value metric-purple'>🔒 Oculto</div></div>", unsafe_allow_html=True)
+                
             html_personal = "Nadie en turno" if not personal_hoy else "<br>".join([f"🟢 {n}" for n in personal_hoy])
             c4.markdown(f"<div class='metric-box' style='padding-bottom:10px;'><div class='metric-title'>Personal en Tienda</div><div style='font-size:14px; font-weight:bold; color:#334155;'>{html_personal}</div></div>", unsafe_allow_html=True)
 
-            st.divider()
-            st.write("#### 🚨 Alertas Operativas")
-            p_db = supabase.table("productos").select("nombre, stock_actual, stock_minimo").execute()
-            if p_db.data:
-                df_p = pd.DataFrame(p_db.data)
-                df_criticos = df_p[df_p['stock_actual'] <= 20].sort_values(by='stock_actual')
-                if not df_criticos.empty:
-                    st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos. Requieren reabastecimiento.")
-                    with st.expander("Ver lista de productos a comprar"):
-                        st.dataframe(df_criticos[['nombre', 'stock_actual']].rename(columns={'nombre':'Producto', 'stock_actual': 'Stock Restante'}), hide_index=True)
-                else: st.success("Todo el inventario supera las 20 unidades.")
+            if es_gerencia:
+                st.divider()
+                st.write("#### 🚨 Alertas Operativas")
+                p_db = supabase.table("productos").select("nombre, stock_actual, stock_minimo").execute()
+                if p_db.data:
+                    df_p = pd.DataFrame(p_db.data)
+                    df_criticos = df_p[df_p['stock_actual'] <= 20].sort_values(by='stock_actual')
+                    if not df_criticos.empty:
+                        st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos. Requieren reabastecimiento.")
+                        with st.expander("Ver lista de productos a comprar"):
+                            st.dataframe(df_criticos[['nombre', 'stock_actual']].rename(columns={'nombre':'Producto', 'stock_actual': 'Stock Restante'}), hide_index=True)
+                    else: st.success("Todo el inventario supera las 20 unidades.")
 
-            st.divider()
-            st.write("#### 📈 Evolución Comercial (Últimos 7 Días)")
-            fechas_7d = [hoy - timedelta(days=i) for i in range(6, -1, -1)]
-            chart_data = []
-            df_7d = df_v[df_v['fecha'] >= (hoy - timedelta(days=6))]
-            
-            for d in fechas_7d:
-                df_dia = df_7d[df_7d['fecha'] == d]
-                v_tot = df_dia['total_venta'].sum()
-                if not df_dia.empty:
-                    _, costo_dia, _ = obtener_costo_y_detalles(df_dia)
-                else:
-                    costo_dia = 0.0
-                util_dia = v_tot - costo_dia
+                st.divider()
+                st.write("#### 📈 Evolución Comercial (Últimos 7 Días)")
+                fechas_7d = [hoy - timedelta(days=i) for i in range(6, -1, -1)]
+                chart_data = []
+                df_7d = df_v[df_v['fecha'] >= (hoy - timedelta(days=6))]
                 
-                chart_data.append({
-                    'Día': d.strftime('%d %b'),
-                    'Ventas Brutas': v_tot,
-                    'Utilidad Líquida': util_dia
-                })
+                for d in fechas_7d:
+                    df_dia = df_7d[df_7d['fecha'] == d]
+                    v_tot = df_dia['total_venta'].sum()
+                    if not df_dia.empty:
+                        _, costo_dia, _ = obtener_costo_y_detalles(df_dia)
+                    else:
+                        costo_dia = 0.0
+                    util_dia = v_tot - costo_dia
+                    
+                    chart_data.append({'Día': d.strftime('%d %b'), 'Ventas Brutas': v_tot, 'Utilidad Líquida': util_dia})
+                    
+                df_chart = pd.DataFrame(chart_data)
+                fig_combo = go.Figure()
+                fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Ventas Brutas', marker_color='#2563eb', opacity=0.85))
+                fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Utilidad Líquida'], name='Utilidad Líquida', marker_color='#10b981', opacity=0.85))
+                fig_combo.add_trace(go.Scatter(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Tendencia', mode='lines+markers', line=dict(color='#f59e0b', width=3), marker=dict(size=8, color='#f59e0b')))
                 
-            df_chart = pd.DataFrame(chart_data)
-            fig_combo = go.Figure()
-            fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Ventas Brutas', marker_color='#2563eb', opacity=0.85))
-            fig_combo.add_trace(go.Bar(x=df_chart['Día'], y=df_chart['Utilidad Líquida'], name='Utilidad Líquida', marker_color='#10b981', opacity=0.85))
-            fig_combo.add_trace(go.Scatter(x=df_chart['Día'], y=df_chart['Ventas Brutas'], name='Tendencia', mode='lines+markers', line=dict(color='#f59e0b', width=3), marker=dict(size=8, color='#f59e0b')))
-            
-            fig_combo.update_layout(
-                barmode='group', xaxis_type='category', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig_combo, use_container_width=True)
+                fig_combo.update_layout(
+                    barmode='group', xaxis_type='category', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'
+                )
+                st.plotly_chart(fig_combo, use_container_width=True)
 
         else: st.info("No hay ventas registradas aún.")
     except Exception as e: st.error(f"Cargando módulos... {e}")
@@ -499,6 +467,9 @@ elif menu == "🛒 VENTAS (POS)":
 
             st.markdown(f"<div style='text-align:right; margin-top:15px;'><h1 style='color:#2563eb; font-size:45px; margin-bottom:0;'>TOTAL: S/. {total_venta:.2f}</h1></div>", unsafe_allow_html=True)
             
+            if st.session_state.logged_in and (st.session_state.is_admin or "reportes" in st.session_state.user_perms):
+                st.caption(f"Ganancia Bruta estimada: S/. {total_venta - costo_total:.2f}")
+
             with st.expander("💸 PAGO Y FACTURACIÓN", expanded=True):
                 lista_vendedores = get_lista_usuarios()
                 vendedor_opciones = {v['usuario']: v['id'] for v in lista_vendedores}
@@ -517,6 +488,25 @@ elif menu == "🛒 VENTAS (POS)":
                 
                 cliente_sel = st.selectbox("Cliente (Opcional):", opciones_clientes)
                 
+                crear_cli = st.checkbox("➕ Registrar Nuevo Cliente ahora")
+                if crear_cli:
+                    st.info("El cliente se guardará para futuras ventas.")
+                    n_doc = st.text_input("DNI/RUC")
+                    n_nom = st.text_input("Nombre Completo")
+                    n_tel = st.text_input("Teléfono / WhatsApp")
+                    n_mail = st.text_input("Correo Electrónico (Marketing)")
+                    if st.button("Guardar y Seleccionar"):
+                        try:
+                            supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
+                            st.success("Cliente guardado. Desmarca la casilla y búscalo en la lista."); time.sleep(2); st.rerun()
+                        except Exception as e:
+                            if "correo" in str(e): 
+                                try:
+                                    supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel}).execute()
+                                    st.success("Cliente guardado (Sin correo). Desmarca la casilla."); time.sleep(2); st.rerun()
+                                except: st.error("El DNI/RUC ya existe.")
+                            else: st.error("El DNI/RUC ya existe.")
+
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
                 
@@ -524,7 +514,7 @@ elif menu == "🛒 VENTAS (POS)":
                     st.info(f"📲 Pide al cliente que escanee el código para pagar con {pago}:")
                     path_qr = get_qr_path(pago)
                     if path_qr: st.image(path_qr, width=220)
-                    else: st.warning(f"⚠️ No se encontró la imagen '{pago}'. Sube el archivo 'qr_{pago.lower()}.png' a GitHub.")
+                    else: st.warning(f"⚠️ Sube la imagen 'qr_{pago.lower()}.png' a tu GitHub.")
 
                 ref_pago = ""
                 if pago != "Efectivo":
@@ -681,6 +671,15 @@ elif menu == "🤝 CLIENTES (CRM)":
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
+                
+                st.divider()
+                st.write("#### 🗑️ Eliminar Cliente")
+                cli_a_borrar = st.selectbox("Selecciona cliente a eliminar:", ["..."] + cls_df['nombre'].tolist())
+                if st.button("🗑️ Confirmar Eliminación Permanente", type="primary"):
+                    if cli_a_borrar != "...":
+                        dni_to_del = cls_df[cls_df['nombre'] == cli_a_borrar]['dni_ruc'].iloc[0]
+                        supabase.table("clientes").delete().eq("dni_ruc", dni_to_del).execute()
+                        st.success("Cliente eliminado exitosamente."); time.sleep(1); st.rerun()
             else: st.info("No hay clientes registrados.")
         except Exception as e: st.error(f"Error procesando clientes: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -709,9 +708,9 @@ elif menu == "🤝 CLIENTES (CRM)":
 # ==========================================
 # 💵 MÓDULO 4: GASTOS OPERATIVOS
 # ==========================================
-elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_perms or st.session_state.is_admin):
+elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_perms or "cierre_caja" in st.session_state.user_perms or st.session_state.is_admin):
     st.markdown('<div class="main-header">Control de Gastos (Caja Chica)</div>', unsafe_allow_html=True)
-    t1, t2 = st.tabs(["📝 Registrar Gasto", "📋 Historial Hoy"])
+    t1, t2 = st.tabs(["📝 Registrar Gasto", "📋 Historial Diario"])
     with t1:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         with st.form("form_gasto"):
@@ -929,7 +928,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
         if len(lista) > 2: return f"Varios ({len(lista)})"
         return ", ".join(lista)
         
-    t_u1, t_u2, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla Activa", "➕ Nuevo Empleado", "🔑 Reset Clave", "⚙️ Editar Permisos", "🗑️ Inhabilitar", "📊 Auditoría de Empleado"])
+    t_u1, t_u2, t_edit, t_u3, t_u4, t_u5, t_u6 = st.tabs(["📋 Plantilla", "➕ Nuevo", "✏️ Editar Perfil", "🔑 Clave", "⚙️ Permisos", "🗑️ Baja / Eliminar", "📊 Auditoría"])
     
     usrs_db = supabase.table("usuarios").select("*").execute()
     df_u, df_activos, df_inactivos = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -961,6 +960,21 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     except: st.error("❌ El Nombre de Usuario (Login) ya existe en el sistema. Elija otro.")
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # REQ: EDITAR PERFIL DE VENDEDOR
+    with t_edit:
+        st.markdown('<div class="css-card">', unsafe_allow_html=True)
+        st.write("#### ✏️ Modificar Datos del Vendedor")
+        if not df_activos.empty:
+            usr_to_edit_prof = st.selectbox("Seleccionar empleado:", df_activos['usuario'].tolist(), key="sel_edit_prof")
+            data_user = df_activos[df_activos['usuario'] == usr_to_edit_prof].iloc[0]
+            with st.form("form_edit_profile"):
+                new_nom = st.text_input("Nombre Completo", value=data_user['nombre_completo'])
+                new_turn = st.selectbox("Turno", ["Mañana", "Tarde", "Completo", "Rotativo"], index=["Mañana", "Tarde", "Completo", "Rotativo"].index(data_user['turno']) if data_user['turno'] in ["Mañana", "Tarde", "Completo", "Rotativo"] else 0)
+                if st.form_submit_button("💾 Guardar Cambios de Perfil", type="primary"):
+                    supabase.table("usuarios").update({"nombre_completo": new_nom, "turno": new_turn}).eq("usuario", usr_to_edit_prof).execute()
+                    st.success("Perfil actualizado correctamente."); time.sleep(1); st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
     with t_u3:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         if not df_activos.empty:
@@ -984,7 +998,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
             with st.form("form_edit_perms"):
                 lista_permisos = ["mermas", "inventario_ver", "inventario_agregar", "inventario_modificar", "inventario_eliminar", "reportes", "cierre_caja", "gestion_usuarios"]
                 valid_curr = [p for p in curr_perms if p in lista_permisos]
-                new_perms = st.multiselect("Permisos Activos (Agrega o quita con la 'X'):", lista_permisos, default=valid_curr)
+                new_perms = st.multiselect("Permisos Activos:", lista_permisos, default=valid_curr)
                 if st.form_submit_button("💾 Actualizar Accesos", type="primary"):
                     if user_to_edit == "admin" and "gestion_usuarios" not in new_perms:
                         st.error("⚠️ Operación Bloqueada: No puedes despojar al 'admin' de su acceso a RRHH.")
@@ -1003,6 +1017,13 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                     u_del = st.selectbox("Suspender Acceso (Despido/Falta):", v_b)
                     if st.button("🗑️ INHABILITAR USUARIO"):
                         supabase.table("usuarios").update({"estado": "Inactivo"}).eq("usuario", u_del).execute(); st.rerun()
+                    st.divider()
+                    if st.button("❌ ELIMINAR DEFINITIVAMENTE (Solo usuarios prueba)"):
+                        try:
+                            supabase.table("usuarios").delete().eq("usuario", u_del).execute()
+                            st.success("Usuario borrado de la Base de Datos.")
+                            time.sleep(1); st.rerun()
+                        except: st.error("No se puede eliminar. Este vendedor ya tiene ventas o asistencias en el historial. Por favor, solo inhabilítalo para no romper los reportes.")
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
@@ -1097,12 +1118,16 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
 elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.user_perms or "reportes" in st.session_state.user_perms or st.session_state.is_admin):
     st.markdown('<div class="main-header">Auditoría Financiera y Tesorería</div>', unsafe_allow_html=True)
     
+    es_gerencia = st.session_state.is_admin or "reportes" in st.session_state.user_perms
+    
     if st.session_state.ticket_cierre:
         tk = st.session_state.ticket_cierre
         st.success("✅ Reporte Z Generado Correctamente.")
-        st.markdown(f"""
+        
+        # 🛡️ TICKET Z PARA CAJERO (Sin utilidades ni costos)
+        ticket_cajero_html = f"""
         <div class="ticket-termico">
-            <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (FIN TURNO)</b></center>
+            <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>
             --------------------------------<br>
             FECHA CIERRE: {tk['fecha']}<br>
             CAJERO RESP: {st.session_state.user_name}<br>
@@ -1112,27 +1137,32 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
             - En Digital: S/. {tk['ventas_digital']:.2f}<br>
             Volumen Venta: {tk['cant_vendida']} items.<br>
             --------------------------------<br>
-            <b>📉 COSTOS Y SALIDAS CAJA:</b><br>
-            Capital Invertido: S/. {tk['capital_inv']:.2f}<br>
-            Gastos (Caja Chica): S/. {tk['tot_gastos']:.2f}<br>
-            Pérdidas x Mermas: S/. {tk['tot_merma']:.2f}<br>
-            Devoluciones Clientes: S/. {tk['tot_dev']:.2f}<br>
-            --------------------------------<br>
-            <b>📊 RENDIMIENTO NETO:</b><br>
-            Ganancia Bruta: S/. {tk['ganancia_bruta']:.2f}<br>
-            <b>UTILIDAD PURA: S/. {tk['utilidad']:.2f}</b><br>
+            <b>📉 SALIDAS DE CAJA:</b><br>
+            Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>
+            Devoluciones: S/. {tk['tot_dev']:.2f}<br>
             --------------------------------<br>
             <b>🏦 EFECTIVO A ENTREGAR AL DUEÑO: S/. {tk['caja_efectivo']:.2f}</b><br>
             --------------------------------<br>
             {tk['alertas_stock']}
         </div>
-        """, unsafe_allow_html=True)
+        """
+        st.markdown(ticket_cajero_html, unsafe_allow_html=True)
         if st.button("🧹 Iniciar Nuevo Turno Operativo", type="primary"):
             st.session_state.ticket_cierre = None
             st.rerun()
     else:
-        t_rep1, t_rep2, t_rep3 = st.tabs(["📊 Balance de Turno Abierto", "📆 Historial Financiero Diario", "🧾 Historial de Tickets"])
+        # Pestañas Dinámicas según el Rol
+        tabs_disponibles = ["📊 Balance de Turno (Caja)"]
+        if es_gerencia:
+            tabs_disponibles.extend(["📆 Historial Diario", "🧾 Historial de Tickets", "🖨️ Reimprimir Cierres Z"])
+            tabs = st.tabs(tabs_disponibles)
+            t_rep1, t_rep2, t_rep3, t_rep4 = tabs[0], tabs[1], tabs[2], tabs[3]
+        else:
+            tabs = st.tabs(tabs_disponibles)
+            t_rep1 = tabs[0]
+            t_rep2, t_rep3, t_rep4 = None, None, None
         
+        # --- PESTAÑA 1: TURNO ACTUAL ---
         with t_rep1:
             st.markdown('<div class="css-card">', unsafe_allow_html=True)
             try:
@@ -1183,17 +1213,25 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 c2.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Efectivo (Caja)</div><div class='metric-value'>S/.{v_efe:.2f}</div></div>", unsafe_allow_html=True)
                 c3.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Digitales</div><div class='metric-value metric-purple'>S/.{v_dig:.2f}</div></div>", unsafe_allow_html=True)
                 
-                st.write("**2. Descuentos, Inversión y Fugas**")
-                c4, c5, c6 = st.columns(3)
-                c4.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería (Inversión)</div><div class='metric-value-small metric-orange'>- S/.{tot_costo:.2f}</div></div>", unsafe_allow_html=True)
-                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Gastos Operativos Caja</div><div class='metric-value-small metric-red'>- S/.{tot_gst:.2f}</div></div>", unsafe_allow_html=True)
-                c6.markdown(f"<div class='metric-box'><div class='metric-title'>Devoluciones/Mermas</div><div class='metric-value-small metric-red'>- S/.{tot_dev + tot_merma:.2f}</div></div>", unsafe_allow_html=True)
-                
-                st.write("**3. Resultados del Negocio**")
-                c7, c8 = st.columns(2)
-                c7.markdown(f"<div class='metric-box' style='border-left: 5px solid #8b5cf6;'><div class='metric-title'>GANANCIA NETA (UTILIDAD PURA)</div><div class='metric-value metric-purple'>S/.{ganancia_neta:.2f}</div></div>", unsafe_allow_html=True)
-                c8.markdown(f"<div class='metric-box' style='background: #ecfdf5; border-left: 5px solid #10b981;'><div class='metric-title'>EFECTIVO FÍSICO A RENDIR EN CAJA</div><div class='metric-value metric-green'>S/.{caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
-                
+                # 🛡️ OCULTAR INFORMACIÓN SENSIBLE AL CAJERO
+                if es_gerencia:
+                    st.write("**2. Descuentos, Inversión y Fugas**")
+                    c4, c5, c6 = st.columns(3)
+                    c4.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería (Inversión)</div><div class='metric-value-small metric-orange'>- S/.{tot_costo:.2f}</div></div>", unsafe_allow_html=True)
+                    c5.markdown(f"<div class='metric-box'><div class='metric-title'>Gastos Operativos Caja</div><div class='metric-value-small metric-red'>- S/.{tot_gst:.2f}</div></div>", unsafe_allow_html=True)
+                    c6.markdown(f"<div class='metric-box'><div class='metric-title'>Devoluciones/Mermas</div><div class='metric-value-small metric-red'>- S/.{tot_dev + tot_merma:.2f}</div></div>", unsafe_allow_html=True)
+                    
+                    st.write("**3. Resultados del Negocio**")
+                    c7, c8 = st.columns(2)
+                    c7.markdown(f"<div class='metric-box' style='border-left: 5px solid #8b5cf6;'><div class='metric-title'>GANANCIA NETA (UTILIDAD PURA)</div><div class='metric-value metric-purple'>S/.{ganancia_neta:.2f}</div></div>", unsafe_allow_html=True)
+                    c8.markdown(f"<div class='metric-box' style='background: #ecfdf5; border-left: 5px solid #10b981;'><div class='metric-title'>EFECTIVO FÍSICO A RENDIR EN CAJA</div><div class='metric-value metric-green'>S/.{caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
+                else:
+                    st.write("**2. Resumen Operativo y Gastos**")
+                    cx1, cx2, cx3 = st.columns(3)
+                    cx1.markdown(f"<div class='metric-box'><div class='metric-title'>Gastos Autorizados</div><div class='metric-value-small metric-red'>- S/.{tot_gst:.2f}</div></div>", unsafe_allow_html=True)
+                    cx2.markdown(f"<div class='metric-box'><div class='metric-title'>Devoluciones Clientes</div><div class='metric-value-small metric-red'>- S/.{tot_dev:.2f}</div></div>", unsafe_allow_html=True)
+                    cx3.markdown(f"<div class='metric-box' style='background: #ecfdf5; border-left: 5px solid #10b981;'><div class='metric-title'>EFECTIVO A RENDIR</div><div class='metric-value metric-green'>S/.{caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
+
                 st.divider()
                 if "cierre_caja" in st.session_state.user_perms or st.session_state.is_admin:
                     with st.form("f_cierre"):
@@ -1214,77 +1252,131 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 'capital_inv': tot_costo, 'tot_dev': tot_dev, 'tot_merma': tot_merma, 'tot_gastos': tot_gst,
                                 'ganancia_bruta': ganancia_bruta, 'caja_efectivo': caja_efectivo, 'utilidad': ganancia_neta, 'alertas_stock': alert_html
                             }
+                            
+                            # 🛡️ GENERAR TICKET FANTASMA COMPLETO PARA EL ADMIN
+                            tk_z_num = f"Z-{int(time.time())}"
+                            tk_admin_html = f"""
+                            <div class="ticket-termico">
+                                <center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>
+                                --------------------------------<br>
+                                FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>
+                                CAJERO: {st.session_state.user_name}<br>
+                                --------------------------------<br>
+                                <b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>
+                                - Efectivo: S/. {v_efe:.2f}<br>
+                                - Digital: S/. {v_dig:.2f}<br>
+                                Volumen: {c_ven} items.<br>
+                                --------------------------------<br>
+                                <b>📉 COSTOS Y SALIDAS CAJA:</b><br>
+                                Capital Inv: S/. {tot_costo:.2f}<br>
+                                Gastos Caja: S/. {tot_gst:.2f}<br>
+                                Mermas: S/. {tot_merma:.2f}<br>
+                                Devoluciones: S/. {tot_dev:.2f}<br>
+                                --------------------------------<br>
+                                <b>📊 RENDIMIENTO NETO:</b><br>
+                                Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>
+                                <b>UTILIDAD PURA: S/. {ganancia_neta:.2f}</b><br>
+                                --------------------------------<br>
+                                <b>🏦 EFECTIVO RENDIR: S/. {caja_efectivo:.2f}</b><br>
+                                --------------------------------<br>
+                            </div>
+                            """
+                            try: supabase.table("ticket_historial").insert({"ticket_numero": tk_z_num, "usuario_id": st.session_state.user_id, "html_payload": tk_admin_html}).execute()
+                            except: pass
+                            
                             st.rerun()
             except Exception as e: st.error(f"Sistema a la espera de transacciones...")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        with t_rep2:
-            st.markdown('<div class="css-card">', unsafe_allow_html=True)
-            st.write("Auditoría histórica: Revisa ingresos, costos y ganancias de días cerrados.")
-            f_dia = st.date_input("📆 Selecciona el día de operación:", value=get_now().date())
-            
-            try:
-                cab_all = supabase.table("ventas_cabecera").select("*").execute()
-                gst_all = supabase.table("gastos").select("*").execute()
-                dev_all = supabase.table("devoluciones").select("*").execute()
-                mermas_all = supabase.table("mermas").select("*").execute()
+        if t_rep2:
+            with t_rep2:
+                st.markdown('<div class="css-card">', unsafe_allow_html=True)
+                st.write("Auditoría histórica: Revisa ingresos, costos y ganancias de días cerrados.")
+                f_dia = st.date_input("📆 Selecciona el día de operación:", value=get_now().date())
                 
-                r_v_tot, r_v_efe, r_v_dig, r_costo, r_gst, r_dev, r_merma = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                
-                if cab_all.data:
-                    df_c_all = pd.DataFrame(cab_all.data)
-                    df_c_all['fecha'] = pd.to_datetime(df_c_all['created_at'], utc=True).dt.tz_convert('America/Lima').dt.date
-                    df_c_dia = df_c_all[df_c_all['fecha'] == f_dia]
+                try:
+                    cab_all = supabase.table("ventas_cabecera").select("*").execute()
+                    gst_all = supabase.table("gastos").select("*").execute()
+                    dev_all = supabase.table("devoluciones").select("*").execute()
+                    mermas_all = supabase.table("mermas").select("*").execute()
                     
-                    if not df_c_dia.empty:
-                        r_v_efe = df_c_dia[df_c_dia['metodo_pago'] == 'Efectivo']['total_venta'].sum()
-                        r_v_dig = df_c_dia[df_c_dia['metodo_pago'] != 'Efectivo']['total_venta'].sum()
-                        r_v_tot = r_v_efe + r_v_dig
-                        _, r_costo, _ = obtener_costo_y_detalles(df_c_dia)
-
-                if gst_all.data:
-                    df_g_all = pd.DataFrame(gst_all.data)
-                    col_t = 'created_at' if 'created_at' in df_g_all.columns else 'fecha'
-                    df_g_all['fecha_local'] = pd.to_datetime(df_g_all[col_t], utc=True).dt.tz_convert('America/Lima')
-                    r_gst = df_g_all[df_g_all['fecha_local'].dt.date == f_dia]['monto'].sum()
-                
-                if dev_all.data:
-                    df_dev_all = pd.DataFrame(dev_all.data)
-                    df_dev_all['fecha_local'] = pd.to_datetime(df_dev_all['created_at'], utc=True).dt.tz_convert('America/Lima')
-                    r_dev = df_dev_all[df_dev_all['fecha_local'].dt.date == f_dia]['dinero_devuelto'].sum()
+                    r_v_tot, r_v_efe, r_v_dig, r_costo, r_gst, r_dev, r_merma = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                     
-                if mermas_all.data:
-                    df_m_all = pd.DataFrame(mermas_all.data)
-                    df_m_all['fecha_local'] = pd.to_datetime(df_m_all['created_at'], utc=True).dt.tz_convert('America/Lima')
-                    r_merma = df_m_all[df_m_all['fecha_local'].dt.date == f_dia]['perdida_monetaria'].sum()
+                    if cab_all.data:
+                        df_c_all = pd.DataFrame(cab_all.data)
+                        df_c_all['fecha'] = pd.to_datetime(df_c_all['created_at'], utc=True).dt.tz_convert('America/Lima').dt.date
+                        df_c_dia = df_c_all[df_c_all['fecha'] == f_dia]
+                        
+                        if not df_c_dia.empty:
+                            r_v_efe = df_c_dia[df_c_dia['metodo_pago'] == 'Efectivo']['total_venta'].sum()
+                            r_v_dig = df_c_dia[df_c_dia['metodo_pago'] != 'Efectivo']['total_venta'].sum()
+                            r_v_tot = r_v_efe + r_v_dig
+                            _, r_costo, _ = obtener_costo_y_detalles(df_c_dia)
 
-                r_g_neta = r_v_tot - r_costo - r_gst - r_dev - r_merma
+                    if gst_all.data:
+                        df_g_all = pd.DataFrame(gst_all.data)
+                        col_t = 'created_at' if 'created_at' in df_g_all.columns else 'fecha'
+                        df_g_all['fecha_local'] = pd.to_datetime(df_g_all[col_t], utc=True).dt.tz_convert('America/Lima')
+                        r_gst = df_g_all[df_g_all['fecha_local'].dt.date == f_dia]['monto'].sum()
+                    
+                    if dev_all.data:
+                        df_dev_all = pd.DataFrame(dev_all.data)
+                        df_dev_all['fecha_local'] = pd.to_datetime(df_dev_all['created_at'], utc=True).dt.tz_convert('America/Lima')
+                        r_dev = df_dev_all[df_dev_all['fecha_local'].dt.date == f_dia]['dinero_devuelto'].sum()
+                        
+                    if mermas_all.data:
+                        df_m_all = pd.DataFrame(mermas_all.data)
+                        df_m_all['fecha_local'] = pd.to_datetime(df_m_all['created_at'], utc=True).dt.tz_convert('America/Lima')
+                        r_merma = df_m_all[df_m_all['fecha_local'].dt.date == f_dia]['perdida_monetaria'].sum()
+
+                    r_g_neta = r_v_tot - r_costo - r_gst - r_dev - r_merma
+                    
+                    if r_v_tot > 0 or r_gst > 0:
+                        st.write("**Resumen de Flujo de Caja**")
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingresos Brutos</div><div class='metric-value-small metric-blue'>S/.{r_v_tot:.2f}</div></div>", unsafe_allow_html=True)
+                        c2.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Inventario</div><div class='metric-value-small metric-orange'>- S/.{r_costo:.2f}</div></div>", unsafe_allow_html=True)
+                        c3.markdown(f"<div class='metric-box'><div class='metric-title'>Egresos (Gast/Dev)</div><div class='metric-value-small metric-red'>- S/.{r_gst + r_dev + r_merma:.2f}</div></div>", unsafe_allow_html=True)
+                        c4.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value-small metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
+                    else:
+                        st.info("Sin registros contables en este día específico.")
+                except Exception as e: st.error("Procesando datos históricos...")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        if t_rep3:
+            with t_rep3:
+                st.markdown('<div class="css-card">', unsafe_allow_html=True)
+                st.write("Directorio de facturas normales emitidas a clientes.")
+                try:
+                    tks = supabase.table("ticket_historial").select("*").ilike("ticket_numero", "AJ-%").order("fecha", desc=True).limit(50).execute()
+                    if tks.data:
+                        df_tks = pd.DataFrame(tks.data)
+                        df_tks['fecha_format'] = pd.to_datetime(df_tks['fecha'], utc=True).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %I:%M %p')
+                        opciones = [f"{row['ticket_numero']} - {row['fecha_format']}" for _, row in df_tks.iterrows()]
+                        sel_tk = st.selectbox("Selecciona un ticket para visualizar", opciones)
+                        if sel_tk:
+                            tk_num = sel_tk.split(" - ")[0]
+                            html_raw = df_tks[df_tks['ticket_numero'] == tk_num]['html_payload'].iloc[0]
+                            st.markdown(html_raw.replace("<script>window.onload=function(){window.print();}</script>", ""), unsafe_allow_html=True)
+                except: pass
+                st.markdown('</div>', unsafe_allow_html=True)
                 
-                if r_v_tot > 0 or r_gst > 0:
-                    st.write("**Resumen de Flujo de Caja**")
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingresos Brutos</div><div class='metric-value-small metric-blue'>S/.{r_v_tot:.2f}</div></div>", unsafe_allow_html=True)
-                    c2.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Inventario</div><div class='metric-value-small metric-orange'>- S/.{r_costo:.2f}</div></div>", unsafe_allow_html=True)
-                    c3.markdown(f"<div class='metric-box'><div class='metric-title'>Egresos (Gast/Dev)</div><div class='metric-value-small metric-red'>- S/.{r_gst + r_dev + r_merma:.2f}</div></div>", unsafe_allow_html=True)
-                    c4.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value-small metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
-                else:
-                    st.info("Sin registros contables en este día específico.")
-            except Exception as e: st.error("Procesando datos históricos...")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with t_rep3:
-            st.markdown('<div class="css-card">', unsafe_allow_html=True)
-            st.write("Directorio cronológico de facturas emitidas por el sistema.")
-            try:
-                tks = supabase.table("ticket_historial").select("ticket_numero, fecha, html_payload").order("fecha", desc=True).limit(50).execute()
-                if tks.data:
-                    df_tks = pd.DataFrame(tks.data)
-                    df_tks['fecha_format'] = pd.to_datetime(df_tks['fecha'], utc=True).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %I:%M %p')
-                    opciones = [f"{row['ticket_numero']} - {row['fecha_format']}" for _, row in df_tks.iterrows()]
-                    sel_tk = st.selectbox("Selecciona un ticket para reimpresión/visualización", opciones)
-                    if sel_tk:
-                        tk_num = sel_tk.split(" - ")[0]
-                        html_raw = df_tks[df_tks['ticket_numero'] == tk_num]['html_payload'].iloc[0]
-                        st.markdown(html_raw.replace("<script>window.onload=function(){window.print();}</script>", ""), unsafe_allow_html=True)
-            except: pass
-            st.markdown('</div>', unsafe_allow_html=True)
+        if t_rep4:
+            with t_rep4:
+                st.markdown('<div class="css-card">', unsafe_allow_html=True)
+                st.write("Directorio de Reportes Z Generados (Reimpresión con detalle financiero)")
+                try:
+                    tks_z = supabase.table("ticket_historial").select("*").ilike("ticket_numero", "Z-%").order("fecha", desc=True).limit(20).execute()
+                    if tks_z.data:
+                        df_tks_z = pd.DataFrame(tks_z.data)
+                        df_tks_z['fecha_format'] = pd.to_datetime(df_tks_z['fecha'], utc=True).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %I:%M %p')
+                        opciones_z = [f"{row['ticket_numero']} - {row['fecha_format']}" for _, row in df_tks_z.iterrows()]
+                        sel_tk_z = st.selectbox("Selecciona un Cierre Z pasado", opciones_z)
+                        if sel_tk_z:
+                            tk_num_z = sel_tk_z.split(" - ")[0]
+                            html_raw_z = df_tks_z[df_tks_z['ticket_numero'] == tk_num_z]['html_payload'].iloc[0]
+                            st.markdown(html_raw_z, unsafe_allow_html=True)
+                    else:
+                        st.info("Aún no se ha guardado ningún Cierre Z en el historial con la Versión 15.0.")
+                except: pass
+                st.markdown('</div>', unsafe_allow_html=True)

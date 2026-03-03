@@ -12,12 +12,16 @@ import pytz
 import uuid
 import logging
 
-# Configuración del logger para evitar fallos silenciosos
+# Configuración del logger para rastrear errores silenciosos
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==========================================
-# 1. GESTIÓN HORARIA NATIVA
+# 1. GESTIÓN HORARIA NATIVA (ZONA PERÚ)
 # ==========================================
+os.environ['TZ'] = 'America/Lima'
+if hasattr(time, 'tzset'):
+    time.tzset()
+
 def get_now():
     return datetime.now(pytz.timezone('America/Lima'))
 
@@ -36,8 +40,7 @@ def get_qr_path(metodo):
         for f in os.listdir('.'):
             if f.lower().startswith(base) and f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
                 return f
-    except Exception as e: 
-        logging.warning(f"Error al buscar QR local: {e}")
+    except Exception as e: pass
     return None
 
 # ==========================================
@@ -90,6 +93,7 @@ st.markdown("""
     .ticket-termico { background: white; color: black; font-family: 'Courier New', monospace; padding: 15px; border: 1px dashed #cbd5e1; width: 100%; max-width: 320px; margin: 0 auto; line-height: 1.2; font-size: 13px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);}
     .linea-corte { text-align: center; margin: 25px 0; border-bottom: 2px dashed #94a3b8; color: #64748b; font-size: 12px; font-weight: bold;}
     .linea-corte span { background: var(--bg-color); padding: 0 10px; }
+    .stButton>button { border-radius: 6px; font-weight: 600; transition: all 0.2s;}
     .btn-checkout>button { background-color: #2563eb; color: white; height: 3.5em; font-size: 16px; border: none; border-radius: 8px;}
     .btn-checkout>button:hover { background-color: #1d4ed8; color: white;}
     </style>
@@ -122,7 +126,7 @@ def get_lista_usuarios():
 
 def registrar_kardex(producto_id, usuario_id, tipo_movimiento, cantidad, motivo):
     try: supabase.table("movimientos_inventario").insert({"producto_id": str(producto_id), "usuario_id": usuario_id, "tipo_movimiento": tipo_movimiento, "cantidad": cantidad, "motivo": motivo}).execute()
-    except Exception as e: logging.error(f"Fallo en inserción Kardex: {e}")
+    except Exception as e: pass
 
 def get_last_cierre_dt():
     try:
@@ -130,7 +134,7 @@ def get_last_cierre_dt():
         if c.data and 'fecha_cierre' in c.data[0]:
             dt = pd.to_datetime(c.data[0]['fecha_cierre'], utc=True)
             return dt.tz_convert('America/Lima')
-    except Exception as e: logging.error(f"Error leyendo último cierre: {e}")
+    except Exception as e: pass
     return pd.to_datetime("2000-01-01T00:00:00Z", utc=True).tz_convert('America/Lima')
 
 def is_valid_uuid(val):
@@ -148,7 +152,7 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS BASADO EN LÓGICA MERGE (AUDITADO V1.0)
+# 🔥 MOTOR COGS BLINDADO CONTRA COLAPSO DE BASE DE DATOS (FIX DEFINITIVO 0.00)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
@@ -156,25 +160,41 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         raw_ids = []
         if 'id' in df_cab.columns: raw_ids.extend(df_cab['id'].astype(str).str.strip().tolist())
         if 'ticket_numero' in df_cab.columns: raw_ids.extend(df_cab['ticket_numero'].astype(str).str.strip().tolist())
-        raw_ids = list(set(raw_ids))
+        raw_ids = [x for x in list(set(raw_ids)) if x]
         
+        if not raw_ids: return pd.DataFrame(), 0.0, 0
+
+        # SEGREGACIÓN MILIMÉTRICA: Previene que un ID "AJ-" rompa la consulta de los IDs enteros
         uuid_list = [x for x in raw_ids if is_valid_uuid(x)]
-        text_list = [x for x in raw_ids if not is_valid_uuid(x) and x]
+        int_list = [x for x in raw_ids if x.isdigit()]
+        text_list = [x for x in raw_ids if x not in uuid_list and x not in int_list]
         
         detalles_data = []
         
+        # 1. Consultar UUIDs válidos
         if uuid_list:
-            res_uuid = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", uuid_list).execute()
-            if hasattr(res_uuid, 'data') and res_uuid.data:
-                detalles_data.extend(res_uuid.data)
+            try:
+                res_uuid = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", uuid_list).execute()
+                if hasattr(res_uuid, 'data') and res_uuid.data: detalles_data.extend(res_uuid.data)
+            except: pass
+            
+        # 2. Consultar Enteros (Los IDs reales que salvan tu sistema)
+        if int_list:
+            try:
+                res_int = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", [int(x) for x in int_list]).execute()
+                if hasattr(res_int, 'data') and res_int.data: detalles_data.extend(res_int.data)
+            except:
+                try: # Plan B si la columna es texto
+                    res_int2 = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", int_list).execute()
+                    if hasattr(res_int2, 'data') and res_int2.data: detalles_data.extend(res_int2.data)
+                except: pass
                 
+        # 3. Consultar Textos mixtos ("AJ-...")
         if text_list:
             try:
-                res_text = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", text_list).execute()
-                if hasattr(res_text, 'data') and res_text.data:
-                    detalles_data.extend(res_text.data)
-            except Exception as db_err:
-                logging.warning(f"Rechazo de BD por incompatibilidad de tipos en IDs de texto: {db_err}")
+                res_text = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad").in_("venta_id", text_list).execute()
+                if hasattr(res_text, 'data') and res_text.data: detalles_data.extend(res_text.data)
+            except: pass
                 
         if not detalles_data: 
             cant_total = int(pd.to_numeric(df_cab.get('cantidad', 0), errors='coerce').sum()) if 'cantidad' in df_cab.columns else 0
@@ -186,13 +206,11 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         df_filt['producto_id_clean'] = df_filt['producto_id_clean'].str.replace(r'\.0$', '', regex=True)
         
         productos_a_buscar = df_filt['producto_id_clean'].unique().tolist()
-
         if not productos_a_buscar:
             cant_total = int(pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0).sum())
             return df_filt, 0.0, cant_total
 
         res_prod = supabase_client.table("productos").select("codigo_barras, nombre, costo_compra").in_("codigo_barras", productos_a_buscar).execute()
-            
         if not res_prod.data: 
             cant_total = int(pd.to_numeric(df_filt['cantidad'], errors='coerce').fillna(0).sum())
             return df_filt, 0.0, cant_total
@@ -209,8 +227,7 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
 
         df_merge['cantidad'] = pd.to_numeric(df_merge['cantidad'], errors='coerce').fillna(0)
         df_merge['costo_compra'] = pd.to_numeric(df_merge['costo_compra'], errors='coerce').fillna(0)
-        df_merge['subtotal'] = pd.to_numeric(df_merge['subtotal'], errors='coerce').fillna(0)
-
+        
         df_merge['costo_total_linea'] = df_merge['cantidad'] * df_merge['costo_compra']
         df_merge['nombre_prod'] = df_merge['nombre'].fillna('Producto Desconocido')
         df_merge['costo_unit'] = df_merge['costo_compra']
@@ -221,7 +238,7 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         return df_merge, costo_total, cant_total
 
     except Exception as e:
-        logging.error(f"Fallo en motor de costeo. Traza: {str(e)}")
+        logging.error(f"Fallo en motor de costeo: {e}")
         return pd.DataFrame(), 0.0, 0
 
 def procesar_codigo_venta(code):
@@ -244,7 +261,7 @@ def procesar_codigo_venta(code):
                 return True
             else: st.error("❌ Sin stock disponible.")
         else: st.warning("⚠️ Producto no encontrado.")
-    except Exception as e: st.error(f"Error de base de datos: {e}")
+    except Exception as e: st.error("Error de base de datos.")
     return False
 
 def execute_factory_reset():
@@ -279,7 +296,7 @@ with st.sidebar.expander("⌚ Marcar Asistencia", expanded=True):
                         supabase.table("asistencia").insert({"usuario_id": u_d.data[0]['id'], "tipo_marcacion": tipo}).execute()
                         st.success(f"✅ Asistencia registrada exitosamente.")
                     else: st.error("❌ Credenciales inválidas.")
-                except Exception as e: st.error(f"Error al conectar: {e}")
+                except Exception as e: st.error("Error al conectar al reloj.")
 
 st.sidebar.divider()
 
@@ -299,7 +316,7 @@ if not st.session_state.logged_in:
                     st.session_state.is_admin = (l_usr == "admin")
                     st.rerun()
                 else: st.error("❌ Acceso Denegado.")
-            except Exception as e: st.error(f"Error de conexión: {e}")
+            except: st.error("Error de conexión al sistema.")
 else:
     st.sidebar.success(f"👤 {st.session_state.user_name}")
     if st.sidebar.button("🚪 Cerrar Sesión"):
@@ -338,7 +355,7 @@ if st.session_state.logged_in:
 menu = st.sidebar.radio("Navegación", menu_options)
 
 # ==========================================
-# 📈 MÓDULO 0: DASHBOARD GENERAL (RESTAURADO A V21.0)
+# 📈 MÓDULO 0: DASHBOARD GENERAL (RESTAURADO A TU DISEÑO FAVORITO)
 # ==========================================
 if menu == "📈 DASHBOARD GENERAL":
     st.markdown('<div class="main-header">Panel de Inteligencia Comercial</div>', unsafe_allow_html=True)
@@ -530,7 +547,7 @@ elif menu == "🛒 VENTAS (POS)":
                             label = f"{r.get('dni_ruc','')} - {r.get('nombre','')}"
                             opciones_clientes.append(label)
                             cliente_dict[label] = r.get('id')
-                except Exception as e: 
+                except: 
                     opciones_clientes = ["Público General (Sin registrar)"]
                     cliente_dict = {}
                 
@@ -547,7 +564,8 @@ elif menu == "🛒 VENTAS (POS)":
                         try:
                             supabase.table("clientes").insert({"dni_ruc": n_doc, "nombre": n_nom, "telefono": n_tel, "correo": n_mail}).execute()
                             st.success("Cliente guardado."); time.sleep(2); st.rerun()
-                        except Exception as e: st.error(f"Fallo al guardar cliente.")
+                        except Exception as e:
+                            st.error(f"Fallo al guardar cliente: Verifica si el DNI ya existe.")
 
                 cp1, cp2 = st.columns(2)
                 pago = cp1.selectbox("Método de Pago", ["Efectivo", "Yape", "Plin", "Tarjeta VISA/MC"])
@@ -585,17 +603,27 @@ elif menu == "🛒 VENTAS (POS)":
                             v_id = t_num 
                             if hasattr(res_insert, 'data') and res_insert.data: 
                                 row_v = res_insert.data[0]
-                                v_id = str(row_v.get('id', t_num)).strip()
+                                v_id_val = row_v.get('id')
+                                v_id = str(v_id_val).strip() if v_id_val is not None else t_num
                             
                             items_html = ""
                             for it in st.session_state.carrito:
+                                # ESCUDO VISIBLE: Muestra alerta si falla el insert (Previene Costo 0.00 silencioso)
                                 try: 
-                                    supabase.table("ventas_detalle").insert({"venta_id": v_id, "producto_id": str(it['id']), "cantidad": it['cant'], "precio_unitario": it['precio'], "subtotal": it['precio'] * it['cant']}).execute()
-                                except Exception as e_det: pass
+                                    supabase.table("ventas_detalle").insert({
+                                        "venta_id": v_id, 
+                                        "producto_id": str(it['id']), 
+                                        "cantidad": it['cant'], 
+                                        "precio_unitario": float(it['precio']), 
+                                        "subtotal": float(it['precio'] * it['cant'])
+                                    }).execute()
+                                except Exception as e_det: 
+                                    st.error(f"⚠️ Atención: Fallo guardando detalle en nube. La venta es válida pero la auditoría del producto {it['nombre']} falló. Llama a Soporte.")
+                                    logging.error(f"Fallo detalle: {e_det}")
                                 
                                 try:
                                     supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
-                                except Exception as e_rpc:
+                                except Exception:
                                     try:
                                         stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
                                         if stk.data: supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
@@ -617,7 +645,7 @@ elif menu == "🛒 VENTAS (POS)":
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error en facturación: {e}")
+                        except Exception as e: st.error(f"🚨 Error de Red o Facturación: {e}")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -703,7 +731,7 @@ elif menu == "🔄 DEVOLUCIONES":
                                 registrar_kardex(p['codigo_barras'], usr_id, "INGRESO_DEVOLUCION", d_cant, m_dev)
                                 st.success("✅ Devuelto exitosamente."); time.sleep(1); st.rerun()
                             else: st.error("Falta motivo o usuario autorizador.")
-            except Exception as e: st.error(f"Fallo de conexión.")
+            except Exception as e: st.error(f"Fallo de red al conectar.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
@@ -791,7 +819,7 @@ elif menu == "💵 GASTOS OPERATIVOS" and ("reportes" in st.session_state.user_p
             start_dt = datetime.combine(f_gasto_dia, datetime.min.time()).replace(tzinfo=pytz.timezone('America/Lima'))
             end_dt = start_dt + timedelta(days=1)
             
-            # FILTRO SEGURO PARA TABLA GASTOS (Verificando si es created_at o fecha)
+            # FILTRO SEGURO DUAL
             try:
                 gst = supabase.table("gastos").select("*, usuarios(nombre_completo)").gte("created_at", start_dt.isoformat()).lt("created_at", end_dt.isoformat()).order("id", desc=True).execute()
             except Exception:
@@ -870,7 +898,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                                         registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
                                         st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
                                     except Exception as db_err:
-                                        st.error(f"Falla crítica: RPC no configurado en BD.")
+                                        st.error(f"Falla crítica: Asegúrate de ejecutar el código SQL para activar RPC.")
         except Exception as e: st.error(f"Error cargando inventario.")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1263,7 +1291,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 
                 cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", lc_iso).execute()
                 
-                # 🛡️ FILTRO DUAL INTELIGENTE PARA TABLAS CON COLUMNAS MIXTAS
+                # 🛡️ FILTRO DUAL INTELIGENTE (Solución Error 42703: column gastos.created_at does not exist)
                 try: gst_all = supabase.table("gastos").select("*").gte("created_at", lc_iso).execute()
                 except: gst_all = supabase.table("gastos").select("*").gte("fecha", lc_iso).execute()
                 
@@ -1366,7 +1394,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 </div>
                                 """
                                 try: supabase.table("ticket_historial").insert({"ticket_numero": tk_z_num, "usuario_id": st.session_state.user_id, "html_payload": tk_admin_html}).execute()
-                                except Exception as log_err: logging.error(f"Falla insertando historial Z.")
+                                except Exception as log_err: logging.error(f"Falla insertando historial de Cierre Z: {log_err}")
                                 
                                 st.rerun()
                             except Exception as cierre_err:

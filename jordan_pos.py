@@ -97,7 +97,7 @@ st.markdown("""
 components.html("""<script>const inputs = window.parent.document.querySelectorAll('input[type="text"]'); if(inputs.length > 0) { inputs[0].focus(); }</script>""", height=0)
 
 # ==========================================
-# 4. FUNCIONES MAESTRAS
+# 4. FUNCIONES MAESTRAS Y MOTOR MATEMÁTICO 
 # ==========================================
 keys_to_init = {
     'logged_in': False, 'user_id': None, 'user_name': "", 'user_perms': [], 'is_admin': False,
@@ -142,7 +142,7 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS BASADO EN TU LÓGICA MERGE
+# 🔥 MOTOR DE COSTOS BASADO EN LÓGICA MERGE
 def obtener_costo_y_detalles(df_cab):
     if df_cab is None or df_cab.empty: return pd.DataFrame(), 0.0, 0
     try:
@@ -153,28 +153,23 @@ def obtener_costo_y_detalles(df_cab):
         valid_ids = [x for x in list(set(valid_ids)) if x != ""]
         if not valid_ids: return pd.DataFrame(), 0.0, 0
 
-        # Descargar detalles
         res_det = supabase.table("ventas_detalle").select("venta_id, producto_id, cantidad").execute()
         if not res_det.data: return pd.DataFrame(), 0.0, 0
         
         df_det = pd.DataFrame(res_det.data)
         df_det['venta_id_str'] = df_det['venta_id'].apply(clean_id)
         
-        # Filtrar solo las ventas requeridas
         df_filt = df_det[df_det['venta_id_str'].isin(valid_ids)].copy()
         if df_filt.empty: return pd.DataFrame(), 0.0, 0
         
-        # Descargar productos (Para el MERGE)
         res_prod = supabase.table("productos").select("codigo_barras, nombre, costo_compra").execute()
         if not res_prod.data: return df_filt, 0.0, int(df_filt['cantidad'].sum())
         
         df_prod = pd.DataFrame(res_prod.data)
         
-        # 🧩 PREPARACIÓN PARA EL MERGE EXACTO
         df_filt['producto_id_clean'] = df_filt['producto_id'].apply(clean_id)
         df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].apply(clean_id)
         
-        # 🔗 MERGE ESTILO PANDAS (Tu Solución)
         df_merge = df_filt.merge(
             df_prod,
             left_on="producto_id_clean",
@@ -182,14 +177,11 @@ def obtener_costo_y_detalles(df_cab):
             how="left"
         )
         
-        # Limpieza de nulos post-merge
         df_merge['cantidad'] = pd.to_numeric(df_merge['cantidad'], errors='coerce').fillna(0)
         df_merge['costo_compra'] = pd.to_numeric(df_merge['costo_compra'], errors='coerce').fillna(0)
         
-        # Cálculo del costo total
         df_merge['costo_total_linea'] = df_merge['cantidad'] * df_merge['costo_compra']
         
-        # Variables de salida estandarizadas para el resto del ERP
         df_merge['costo_unit'] = df_merge['costo_compra']
         df_merge['nombre_prod'] = df_merge['nombre'].fillna('Producto Desconocido')
         
@@ -694,6 +686,7 @@ elif menu == "🤝 CLIENTES (CRM)":
 
                 csv = cls_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label="📥 Descargar Base de Datos para Marketing (CSV)", data=csv, file_name='clientes_jordan.csv', mime='text/csv')
+                
                 st.dataframe(cls_df[cols_a_mostrar], use_container_width=True)
                 
                 st.divider()
@@ -786,12 +779,21 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
             df['Categoría'] = df['categorias'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
             df['Marca'] = df['marcas'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
             
+            # Formateo estricto para evitar ceros masivos
+            df['precio_lista'] = pd.to_numeric(df['precio_lista'], errors='coerce').fillna(0)
+            df['costo_compra'] = pd.to_numeric(df['costo_compra'], errors='coerce').fillna(0)
+
             columnas_mostrar = ['codigo_barras', 'nombre', 'Categoría', 'Marca', 'precio_lista', 'stock_actual', 'stock_minimo']
+            
             if st.session_state.is_admin:
                 df['Margen %'] = ((df['precio_lista'] - df['costo_compra']) / df['costo_compra'] * 100).fillna(0).round(1).astype(str) + "%"
                 columnas_mostrar.insert(4, 'costo_compra')
                 columnas_mostrar.insert(6, 'Margen %')
             
+            df['precio_lista'] = df['precio_lista'].apply(lambda x: f"{float(x):.2f}")
+            if 'costo_compra' in df.columns:
+                df['costo_compra'] = df['costo_compra'].apply(lambda x: f"{float(x):.2f}")
+
             if 'stock_minimo' not in df.columns: df['stock_minimo'] = 5
             
             def highlight_stock(row):
@@ -900,7 +902,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                     df_det, _, _ = obtener_costo_y_detalles(df_ca_dia)
                     if not df_det.empty:
                         res_alm = df_det.groupby(['producto_id', 'nombre_prod']).agg(
-                            Unidades_Vendidas=('cantidad', 'sum'), Dinero_Generado=('costo_total_linea', 'sum')
+                            Unidades_Vendidas=('cantidad', 'sum'), Dinero_Generado=('subtotal', 'sum')
                         ).reset_index().sort_values(by='Unidades_Vendidas', ascending=False)
                         st.dataframe(res_alm, use_container_width=True)
                     else: st.info("No hay detalles de venta registrados para esta fecha.")
@@ -1120,7 +1122,7 @@ elif menu == "👥 RRHH (Vendedores)" and ("gestion_usuarios" in st.session_stat
                 st.write("**Desempeño Financiero (Productividad)**")
                 c4, c5, c6 = st.columns(3)
                 c4.markdown(f"<div class='metric-box'><div class='metric-title'>Dinero a Caja</div><div class='metric-value-small metric-blue'>S/. {v_hoy_ventas:.2f}</div></div>", unsafe_allow_html=True)
-                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
+                c5.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>- S/. {v_hoy_costo:.2f}</div></div>", unsafe_allow_html=True)
                 c6.markdown(f"<div class='metric-box' style='border:2px solid #8b5cf6;'><div class='metric-title'>UTILIDAD GENERADA</div><div class='metric-value-small metric-purple'>S/. {v_hoy_utilidad:.2f}</div></div>", unsafe_allow_html=True)
 
                 st.write("**Control de Asistencia y Turnos**")

@@ -145,7 +145,8 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         return pd.DataFrame(), 0.0, 0
     try:
         valid_ids = df_cab['id'].dropna().astype(str).tolist()
-        if not valid_ids: return pd.DataFrame(), 0.0, 0
+        if not valid_ids: 
+            return pd.DataFrame(), 0.0, 0
 
         detalles_data = []
         for i in range(0, len(valid_ids), 50):
@@ -154,7 +155,8 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
                 if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
             except: pass
                 
-        if not detalles_data: return pd.DataFrame(), 0.0, 0
+        if not detalles_data: 
+            return pd.DataFrame(), 0.0, 0
 
         df_det = pd.DataFrame(detalles_data)
         productos_a_buscar = df_det['producto_id'].apply(clean_id).unique().tolist()
@@ -194,7 +196,7 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         return pd.DataFrame(), 0.0, 0
 
 def procesar_codigo_venta(code):
-    st.session_state.last_ticket_html = None # Reseteo automático de pantalla
+    st.session_state.last_ticket_html = None 
     try:
         prod = supabase.table("productos").select("*").eq("codigo_barras", code).execute()
         if prod.data:
@@ -464,7 +466,7 @@ elif menu == "🛒 VENTAS (POS)":
                 c1, c2, c3, c4 = st.columns([4.5, 2.5, 2, 1])
                 c1.markdown(f"<div style='padding-top:10px; font-size:14px;'><b>{item['nombre']}</b></div>", unsafe_allow_html=True)
                 
-                # SISTEMA DE REGATEO (Sin límite forzado, pero con validación)
+                # SISTEMA DE REGATEO (Mínimo definido desde el Alta del Producto)
                 nuevo_p = c2.number_input("Precio", min_value=0.0, value=float(item['precio']), step=1.0, key=f"p_{i}", label_visibility="collapsed")
                 st.session_state.carrito[i]['precio'] = nuevo_p
                 
@@ -839,41 +841,57 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                 df['Marca'] = df['marcas'].apply(lambda x: x['nombre'] if isinstance(x, dict) else 'N/A')
                 
                 df['precio_lista'] = pd.to_numeric(df['precio_lista'], errors='coerce').fillna(0)
+                df['precio_minimo'] = pd.to_numeric(df['precio_minimo'], errors='coerce').fillna(0)
                 df['costo_compra'] = pd.to_numeric(df['costo_compra'], errors='coerce').fillna(0)
                 df['stock_minimo'] = pd.to_numeric(df['stock_minimo'], errors='coerce').fillna(5)
+                df['stock_inicial'] = pd.to_numeric(df['stock_inicial'], errors='coerce').fillna(0)
 
-                columnas_mostrar = ['codigo_barras', 'nombre', 'Categoría', 'Marca', 'precio_lista', 'stock_actual', 'stock_minimo']
+                columnas_mostrar = ['codigo_barras', 'nombre', 'Categoría', 'Marca', 'precio_lista', 'precio_minimo', 'stock_inicial', 'stock_actual', 'stock_minimo']
                 
                 if st.session_state.is_admin:
                     df['Margen %'] = ((df['precio_lista'] - df['costo_compra']) / df['costo_compra'] * 100).fillna(0).round(1).astype(str) + "%"
                     columnas_mostrar.insert(4, 'costo_compra')
-                    columnas_mostrar.insert(6, 'Margen %')
+                    columnas_mostrar.insert(7, 'Margen %')
                 
                 df_show = df[columnas_mostrar].copy()
+                
                 df_show['precio_lista'] = df_show['precio_lista'].apply(lambda x: f"{float(x):.2f}")
+                df_show['precio_minimo'] = df_show['precio_minimo'].apply(lambda x: f"{float(x):.2f}")
                 if 'costo_compra' in df_show.columns:
                     df_show['costo_compra'] = df_show['costo_compra'].apply(lambda x: f"{float(x):.2f}")
                 
+                rename_dict = {
+                    'codigo_barras': 'Cód. Barras',
+                    'nombre': 'Producto',
+                    'costo_compra': 'Costo Compra',
+                    'precio_lista': 'Precio Sugerido',
+                    'precio_minimo': 'Precio Mínimo',
+                    'stock_inicial': 'Stock Inicial',
+                    'stock_actual': 'Stock Real',
+                    'stock_minimo': 'Alerta Mín.'
+                }
+                df_show = df_show.rename(columns=rename_dict)
+                
                 def highlight_stock(row):
-                    if row['stock_actual'] <= row['stock_minimo']: return ['background-color: #fef2f2; color: #dc2626'] * len(row)
+                    if row['Stock Real'] <= row['Alerta Mín.']: return ['background-color: #fef2f2; color: #dc2626'] * len(row)
                     return [''] * len(row)
                 
                 st.dataframe(df_show.style.apply(highlight_stock, axis=1), use_container_width=True)
                 
                 if "inventario_modificar" in st.session_state.user_perms or st.session_state.is_admin:
                     st.divider()
-                    col_r1, col_r2 = st.columns(2)
+                    col_r1, col_r2, col_r3 = st.columns(3)
                     with col_r1:
-                        st.write("#### ⚡ Reabastecimiento / Ajuste de Stock")
+                        st.write("#### ⚡ Ajuste de Stock")
                         with st.form("form_add_stock"):
                             sel_p = st.selectbox("Producto a modificar:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
                             add_qty = st.number_input("Cantidad entrante/saliente (Usa - para restar)", step=1, value=0)
-                            motivo_auditoria = st.text_input("Motivo del Ajuste (Ej. 'Factura 001' o 'Conteo Físico') - OBLIGATORIO")
+                            motivo_auditoria = st.text_input("Motivo del Ajuste (Ej. 'Factura' o 'Conteo')")
                             
-                            if st.form_submit_button("💾 Ejecutar Ajuste Físico", type="primary"):
+                            if st.form_submit_button("💾 Ejecutar Ajuste"):
                                 if sel_p != "..." and add_qty != 0:
                                     if not motivo_auditoria.strip():
-                                        st.error("🛑 AUDITORÍA: Debes ingresar el motivo.")
+                                        st.error("🛑 Ingresa el motivo.")
                                     else:
                                         c_up = sel_p.split(" - ")[0]
                                         try:
@@ -883,21 +901,34 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                                             tipo_mov = "INGRESO_MANUAL" if add_qty > 0 else "SALIDA_MANUAL"
                                             registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
                                             st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
-                                        except Exception:
-                                            st.error(f"Falla crítica: Base de datos denegó operación.")
+                                        except Exception: st.error(f"Falla crítica en base de datos.")
                     
                     with col_r2:
-                        st.write("#### 🔔 Configurar Alertas por Producto")
+                        st.write("#### 🔔 Configurar Alertas")
                         with st.form("form_alerta_minima"):
                             sel_p_min = st.selectbox("Elegir producto para cambiar alerta:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
                             nuevo_min = st.number_input("Avisar cuando queden solo:", min_value=0, step=1, value=5)
-                            if st.form_submit_button("💾 Actualizar Límite de Alerta"):
+                            if st.form_submit_button("💾 Actualizar Límite"):
                                 if sel_p_min != "...":
                                     c_up_min = sel_p_min.split(" - ")[0]
                                     try:
                                         supabase.table("productos").update({"stock_minimo": nuevo_min}).eq("codigo_barras", c_up_min).execute()
                                         st.success("✅ Alerta actualizada."); time.sleep(1); st.rerun()
                                     except Exception: st.error("Error actualizando alerta.")
+                                    
+                    with col_r3:
+                        st.write("#### 💵 Actualizar Precios")
+                        with st.form("form_update_prices"):
+                            sel_p_price = st.selectbox("Elegir producto:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()], key="sel_price")
+                            new_sug = st.number_input("Nuevo Precio Sugerido (S/.)", min_value=0.0, step=1.0)
+                            new_min = st.number_input("Nuevo Precio Mínimo (S/.)", min_value=0.0, step=1.0)
+                            if st.form_submit_button("💾 Guardar Precios"):
+                                if sel_p_price != "...":
+                                    c_up_price = sel_p_price.split(" - ")[0]
+                                    try:
+                                        supabase.table("productos").update({"precio_lista": new_sug, "precio_minimo": new_min}).eq("codigo_barras", c_up_price).execute()
+                                        st.success("✅ Precios actualizados."); time.sleep(1); st.rerun()
+                                    except Exception: st.error("Error actualizando precios.")
         except Exception: st.error(f"Error cargando inventario.")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -920,18 +951,24 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                 f_comp = f8.selectbox("Compatibilidad", comps['nombre'].tolist() if not comps.empty else [])
                 
                 st.write("**Costos y Almacén**")
-                f4, f5, f6, f7 = st.columns(4)
+                f4, f5, f_pmin, f6, f7 = st.columns(5)
                 f_costo = f4.number_input("Costo Compra (S/.)", min_value=0.0)
                 f_venta = f5.number_input("Precio Sugerido (S/.)", min_value=0.0)
-                f_stock = f6.number_input("Stock Físico Inicial", min_value=0)
-                f_smin = f7.number_input("Alerta de Stock Mínimo", value=5)
+                f_minimo = f_pmin.number_input("Precio Mínimo (S/.)", min_value=0.0)
+                f_stock = f6.number_input("Stock Inicial", min_value=0)
+                f_smin = f7.number_input("Alerta Mínima", value=5)
                 
                 if st.form_submit_button("🚀 GUARDAR EN BASE DE DATOS", type="primary"):
                     if c_cod and c_nom:
                         cid = int(cats[cats['nombre'] == f_cat]['id'].iloc[0])
                         mid = int(mars[mars['nombre'] == f_mar]['id'].iloc[0])
                         try:
-                            supabase.table("productos").insert({"codigo_barras": c_cod, "nombre": c_nom, "categoria_id": cid, "marca_id": mid, "calidad": f_cal, "compatibilidad": f_comp, "costo_compra": f_costo, "precio_lista": f_venta, "precio_minimo": f_venta, "stock_actual": f_stock, "stock_inicial": f_stock, "stock_minimo": f_smin}).execute()
+                            supabase.table("productos").insert({
+                                "codigo_barras": c_cod, "nombre": c_nom, "categoria_id": cid, "marca_id": mid, 
+                                "calidad": f_cal, "compatibilidad": f_comp, "costo_compra": f_costo, 
+                                "precio_lista": f_venta, "precio_minimo": f_minimo, 
+                                "stock_actual": f_stock, "stock_inicial": f_stock, "stock_minimo": f_smin
+                            }).execute()
                             if f_stock > 0: registrar_kardex(c_cod, st.session_state.user_id, "INGRESO_COMPRA", f_stock, "Registro Inicial")
                             st.success("✅ Producto Registrado Exitosamente."); time.sleep(1); st.rerun()
                         except: st.error("❌ El código de barras ya existe.")
@@ -1539,7 +1576,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         st.write("**1. Ingresos y Dinero Físico**")
                         st.caption(f"Cantidad de Productos Vendidos: **{r_c_ven} unidades**")
                         c1, c2, c3 = st.columns(3)
-                        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingresos Brutos</div><div class='metric-value metric-blue'>S/.{r_v_tot:.2f}</div></div>", unsafe_allow_html=True)
+                        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingresos Brutos</div><div class='metric-value-small metric-blue'>S/.{r_v_tot:.2f}</div></div>", unsafe_allow_html=True)
                         c2.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Efectivo (Caja)</div><div class='metric-value'>S/.{r_v_efe:.2f}</div></div>", unsafe_allow_html=True)
                         c3.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Digitales</div><div class='metric-value metric-purple'>S/.{r_v_dig:.2f}</div></div>", unsafe_allow_html=True)
                         
@@ -1551,7 +1588,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         
                         st.write("**3. Resultados del Negocio**")
                         c7, c8 = st.columns(2)
-                        c7.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
+                        c7.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value-small metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
                         c8.markdown(f"<div class='metric-box' style='background: #ecfdf5; border-left:4px solid #10b981;'><div class='metric-title'>Efectivo a Entregar</div><div class='metric-value metric-green'>S/.{r_caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
 
                     else:

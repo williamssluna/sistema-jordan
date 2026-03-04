@@ -10,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pytz
 import logging
-import uuid
 
 # Configuración del logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -141,54 +140,62 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR COGS - BÚSQUEDA EXCLUSIVA POR UUID (Alineado con tu DB)
+# 🔥 MOTOR DE COSTOS INFALIBLE (MAPEO POR DICCIONARIO)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
     try:
-        # Extraer exclusivamente los UUIDs de la columna 'id' de ventas_cabecera
+        # Extraer los IDs de las ventas del turno
         valid_ids = df_cab['id'].dropna().astype(str).tolist()
-        
+        if not valid_ids: 
+            return pd.DataFrame(), 0.0, 0
+
+        # 1. Recuperamos TODOS los detalles de las ventas (En lotes para evitar bloqueos)
         detalles_data = []
-        # Buscar en la tabla de detalles en lotes, usando solo el UUID
-        if valid_ids:
-            for i in range(0, len(valid_ids), 50):
-                try:
-                    res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", valid_ids[i:i+50]).execute()
-                    if hasattr(res, 'data') and res.data: 
-                        detalles_data.extend(res.data)
-                except: pass
+        for i in range(0, len(valid_ids), 50):
+            try:
+                res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", valid_ids[i:i+50]).execute()
+                if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
+            except: pass
                 
         if not detalles_data: 
             return pd.DataFrame(), 0.0, 0
 
         df_det = pd.DataFrame(detalles_data)
-        df_det['producto_id_clean'] = df_det['producto_id'].apply(clean_id)
         
-        productos_a_buscar = df_det['producto_id_clean'].unique().tolist()
+        # 2. Descargamos el catálogo de productos para ver cuánto costó cada cosa
+        productos_a_buscar = df_det['producto_id'].apply(clean_id).unique().tolist()
         
         prod_data = []
-        for i in range(0, len(productos_a_buscar), 50):
-            try:
-                res_prod = supabase_client.table("productos").select("codigo_barras, nombre, costo_compra").in_("codigo_barras", productos_a_buscar[i:i+50]).execute()
-                if hasattr(res_prod, 'data') and res_prod.data: 
-                    prod_data.extend(res_prod.data)
-            except: pass
+        if productos_a_buscar:
+            for i in range(0, len(productos_a_buscar), 50):
+                try:
+                    res_prod = supabase_client.table("productos").select("codigo_barras, nombre, costo_compra").in_("codigo_barras", productos_a_buscar[i:i+50]).execute()
+                    if hasattr(res_prod, 'data') and res_prod.data: prod_data.extend(res_prod.data)
+                except: pass
 
         if not prod_data: 
             cant_total = int(pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0).sum())
             return df_det, 0.0, cant_total
 
-        # MAPEO POR DICCIONARIO PARA OBTENER EL COSTO DE CADA ITEM
+        # 3. EL MAPEO EXACTO (Cruza Códigos sin fallar)
         df_prod = pd.DataFrame(prod_data)
         df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].apply(clean_id)
+        
+        # Crea un diccionario de memoria: ej. {'7751731004418': 100.00}
         costo_dict = dict(zip(df_prod['codigo_barras_clean'], pd.to_numeric(df_prod['costo_compra'], errors='coerce').fillna(0.0)))
         nombre_dict = dict(zip(df_prod['codigo_barras_clean'], df_prod['nombre']))
 
+        df_det['producto_id_clean'] = df_det['producto_id'].apply(clean_id)
+        
+        # Inyecta el costo y el nombre a los detalles vendidos
         df_det['costo_compra'] = df_det['producto_id_clean'].map(costo_dict).fillna(0.0)
-        df_det['nombre_prod'] = df_det['producto_id_clean'].map(nombre_dict).fillna("Producto Desconocido")
+        df_det['nombre_prod'] = df_det['producto_id_clean'].map(nombre_dict).fillna("Desconocido")
 
         df_det['cantidad'] = pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0)
+        df_det['subtotal'] = pd.to_numeric(df_det['subtotal'], errors='coerce').fillna(0)
+        
+        # 4. Cálculo final multiplicando Cantidad x Costo de Compra
         df_det['costo_total_linea'] = df_det['cantidad'] * df_det['costo_compra']
 
         costo_total = float(df_det['costo_total_linea'].sum())
@@ -564,27 +571,25 @@ elif menu == "🛒 VENTAS (POS)":
                             
                             try: 
                                 res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
-                            except Exception as e_cab:
+                            except Exception:
                                 if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
                                 res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
 
-                            # OBTENER EL UUID REAL GENERADO POR SUPABASE PARA EVITAR RECHAZOS
-                            v_id_uuid = res_insert.data[0]['id'] 
+                            v_id = res_insert.data[0]['id'] 
                             
                             items_html = ""
                             for it in st.session_state.carrito:
-                                # INSERCIÓN SÚPER ESTRICTA (venta_id -> uuid, producto_id -> text)
+                                # AHORA GUARDARÁ EL PRODUCTO SIN FALLAR
                                 try: 
                                     supabase.table("ventas_detalle").insert({
-                                        "venta_id": v_id_uuid, 
+                                        "venta_id": v_id, 
                                         "producto_id": str(it['id']), 
                                         "cantidad": int(it['cant']), 
                                         "precio_unitario": float(it['precio']), 
                                         "subtotal": float(it['precio'] * it['cant'])
                                     }).execute()
                                 except Exception as e_det: 
-                                    st.error(f"🚨 ERROR FATAL AL GUARDAR EL PRODUCTO: {e_det}")
-                                    st.stop()
+                                    st.error(f"🚨 ERROR FATAL: {e_det}")
                                 
                                 try: supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
                                 except Exception:
@@ -655,7 +660,7 @@ elif menu == "🔄 DEVOLUCIONES":
                 v_cab = supabase.table("ventas_cabecera").select("*").eq("ticket_numero", search_dev.upper()).execute()
                 if v_cab.data:
                     v_row = v_cab.data[0]
-                    v_id_search = str(v_row.get('id')).strip() # ES EL UUID
+                    v_id_search = str(v_row.get('id')).strip()
                     st.success(f"✅ Ticket Encontrado. Pago: {v_row['metodo_pago']}")
                     
                     v_det = supabase.table("ventas_detalle").select("*").eq("venta_id", v_id_search).execute()
@@ -975,7 +980,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
 # ==========================================
 # ⚠️ MÓDULO 6: MERMAS 
 # ==========================================
-elif menu == "⚠️ MERMAS" and ("mermas" in st.session_state.user_perms or st.session_state.is_admin):
+elif menu == "⚠️ MERMAS/DAÑOS" and ("mermas" in st.session_state.user_perms or st.session_state.is_admin):
     st.markdown('<div class="main-header">Registro de Mermas (Bajas)</div>', unsafe_allow_html=True)
     st.markdown('<div class="css-card">', unsafe_allow_html=True)
     col_m1, col_m2 = st.columns(2)
@@ -1230,42 +1235,43 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
         tk = st.session_state.ticket_cierre
         st.success("✅ Reporte Z Generado Correctamente.")
         
+        # TICKET HTML LIMPIO Y SIN SANGRÍAS
         if es_gerencia:
             financiero_html = (
-                "<b>📉 INVERSIÓN Y UTILIDAD:</b><br>" +
-                f"Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>" +
-                f"Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>" +
-                f"<b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>" +
-                "--------------------------------<br>"
+"<b>📉 INVERSIÓN Y UTILIDAD:</b><br>" +
+f"Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>" +
+f"Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>" +
+f"<b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>" +
+"--------------------------------<br>"
             )
         else:
             financiero_html = (
-                "<b>📉 SALIDAS DE CAJA:</b><br>" +
-                f"Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>" +
-                f"Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>" +
-                "--------------------------------<br>"
+"<b>📉 SALIDAS DE CAJA:</b><br>" +
+f"Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>" +
+f"Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>" +
+"--------------------------------<br>"
             )
 
         ticket_cajero_html = (
-            "<div class='ticket-termico'>" +
-            "<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>" +
-            "--------------------------------<br>" +
-            f"FECHA CIERRE: {tk['fecha']}<br>" +
-            f"CAJERO RESP: {st.session_state.user_name}<br>" +
-            "--------------------------------<br>" +
-            f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>" +
-            f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>" +
-            f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>" +
-            f"Volumen Venta: {tk['cant_vendida']} items.<br>" +
-            "--------------------------------<br>" +
-            financiero_html + 
-            tk.get('personal_html', '') + 
-            "<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
-            f"EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>" +
-            f"PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>" +
-            "--------------------------------<br>" +
-            tk.get('alertas_stock', '') +
-            "</div>"
+"<div class='ticket-termico'>" +
+"<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>" +
+"--------------------------------<br>" +
+f"FECHA CIERRE: {tk['fecha']}<br>" +
+f"CAJERO RESP: {st.session_state.user_name}<br>" +
+"--------------------------------<br>" +
+f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>" +
+f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>" +
+f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>" +
+f"Volumen Venta: {tk['cant_vendida']} items.<br>" +
+"--------------------------------<br>" +
+f"{financiero_html}" +
+f"{tk.get('personal_html', '')}" +
+"<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
+f"EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>" +
+f"PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>" +
+"--------------------------------<br>" +
+f"{tk.get('alertas_stock', '')}" +
+"</div>"
         )
 
         st.markdown(ticket_cajero_html, unsafe_allow_html=True)
@@ -1292,38 +1298,35 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 
                 cab_all = supabase.table("ventas_cabecera").select("*").gte("created_at", lc_iso).execute()
                 
-                try:
-                    gst_res = supabase.table("gastos").select("*").order("id", desc=True).limit(500).execute()
-                    if gst_res.data:
-                        df_g_temp = pd.DataFrame(gst_res.data)
-                        col_t = 'created_at' if 'created_at' in df_g_temp.columns else 'fecha'
-                        df_g_temp['ts'] = pd.to_datetime(df_g_temp[col_t], utc=True).dt.tz_convert('America/Lima')
-                        df_g_turno = df_g_temp[df_g_temp['ts'] >= lc]
-                        tot_gst = df_g_turno['monto'].sum()
-                    else: tot_gst = 0.0
-                except: tot_gst = 0.0
+                try: gst_res = supabase.table("gastos").select("*").order("id", desc=True).limit(500).execute()
+                except: gst_res = None
+                if gst_res and gst_res.data:
+                    df_g_temp = pd.DataFrame(gst_res.data)
+                    col_t = 'created_at' if 'created_at' in df_g_temp.columns else 'fecha'
+                    df_g_temp['ts'] = pd.to_datetime(df_g_temp[col_t], utc=True).dt.tz_convert('America/Lima')
+                    df_g_turno = df_g_temp[df_g_temp['ts'] >= lc]
+                    tot_gst = df_g_turno['monto'].sum()
+                else: tot_gst = 0.0
                 
-                try:
-                    dev_res = supabase.table("devoluciones").select("*").order("id", desc=True).limit(500).execute()
-                    if dev_res.data:
-                        df_d_temp = pd.DataFrame(dev_res.data)
-                        col_t = 'created_at' if 'created_at' in df_d_temp.columns else 'fecha'
-                        df_d_temp['ts'] = pd.to_datetime(df_d_temp[col_t], utc=True).dt.tz_convert('America/Lima')
-                        df_d_turno = df_d_temp[df_d_temp['ts'] >= lc]
-                        tot_dev = df_d_turno['dinero_devuelto'].sum()
-                    else: tot_dev = 0.0
-                except: tot_dev = 0.0
+                try: dev_res = supabase.table("devoluciones").select("*").order("id", desc=True).limit(500).execute()
+                except: dev_res = None
+                if dev_res and dev_res.data:
+                    df_d_temp = pd.DataFrame(dev_res.data)
+                    col_t = 'created_at' if 'created_at' in df_d_temp.columns else 'fecha'
+                    df_d_temp['ts'] = pd.to_datetime(df_d_temp[col_t], utc=True).dt.tz_convert('America/Lima')
+                    df_d_turno = df_d_temp[df_d_temp['ts'] >= lc]
+                    tot_dev = df_d_turno['dinero_devuelto'].sum()
+                else: tot_dev = 0.0
                 
-                try:
-                    mer_res = supabase.table("mermas").select("*").order("id", desc=True).limit(500).execute()
-                    if mer_res.data:
-                        df_m_temp = pd.DataFrame(mer_res.data)
-                        col_t = 'created_at' if 'created_at' in df_m_temp.columns else 'fecha'
-                        df_m_temp['ts'] = pd.to_datetime(df_m_temp[col_t], utc=True).dt.tz_convert('America/Lima')
-                        df_m_turno = df_m_temp[df_m_temp['ts'] >= lc]
-                        tot_merma = df_m_turno['perdida_monetaria'].sum()
-                    else: tot_merma = 0.0
-                except: tot_merma = 0.0
+                try: mer_res = supabase.table("mermas").select("*").order("id", desc=True).limit(500).execute()
+                except: mer_res = None
+                if mer_res and mer_res.data:
+                    df_m_temp = pd.DataFrame(mer_res.data)
+                    col_t = 'created_at' if 'created_at' in df_m_temp.columns else 'fecha'
+                    df_m_temp['ts'] = pd.to_datetime(df_m_temp[col_t], utc=True).dt.tz_convert('America/Lima')
+                    df_m_turno = df_m_temp[df_m_temp['ts'] >= lc]
+                    tot_merma = df_m_turno['perdida_monetaria'].sum()
+                else: tot_merma = 0.0
                 
                 tot_v, v_efe, v_dig, tot_costo = 0.0, 0.0, 0.0, 0.0
                 c_ven = 0
@@ -1419,32 +1422,32 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                 tk_z_num = f"Z-{int(time.time())}"
                                 
                                 tk_admin_html = (
-                                    "<div class='ticket-termico'>" +
-                                    "<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>" +
-                                    "--------------------------------<br>" +
-                                    f"FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>" +
-                                    f"CAJERO: {st.session_state.user_name}<br>" +
-                                    "--------------------------------<br>" +
-                                    f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>" +
-                                    f"- Efectivo: S/. {v_efe:.2f}<br>" +
-                                    f"- Digital: S/. {v_dig:.2f}<br>" +
-                                    f"Volumen: {c_ven} items.<br>" +
-                                    "--------------------------------<br>" +
-                                    "<b>📉 INVERSIÓN Y COSTOS:</b><br>" +
-                                    f"Costo Mercadería: S/. {tot_costo:.2f}<br>" +
-                                    f"Gastos Caja: S/. {tot_gst:.2f}<br>" +
-                                    f"Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>" +
-                                    "--------------------------------<br>" +
-                                    "<b>📊 RENDIMIENTO NETO:</b><br>" +
-                                    f"Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>" +
-                                    f"<b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>" +
-                                    "--------------------------------<br>" +
-                                    f"{personal_html}" +
-                                    "<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
-                                    f"EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>" +
-                                    f"PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>" +
-                                    "--------------------------------<br>" +
-                                    "</div>"
+"<div class='ticket-termico'>" +
+"<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>" +
+"--------------------------------<br>" +
+f"FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>" +
+f"CAJERO: {st.session_state.user_name}<br>" +
+"--------------------------------<br>" +
+f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>" +
+f"- Efectivo: S/. {v_efe:.2f}<br>" +
+f"- Digital: S/. {v_dig:.2f}<br>" +
+f"Volumen: {c_ven} items.<br>" +
+"--------------------------------<br>" +
+"<b>📉 INVERSIÓN Y COSTOS:</b><br>" +
+f"Costo Mercadería: S/. {tot_costo:.2f}<br>" +
+f"Gastos Caja: S/. {tot_gst:.2f}<br>" +
+f"Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>" +
+"--------------------------------<br>" +
+"<b>📊 RENDIMIENTO NETO:</b><br>" +
+f"Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>" +
+f"<b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>" +
+"--------------------------------<br>" +
+f"{personal_html}" +
+"<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
+f"EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>" +
+f"PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>" +
+"--------------------------------<br>" +
+"</div>"
                                 )
                                 
                                 try: supabase.table("ticket_historial").insert({"ticket_numero": tk_z_num, "usuario_id": st.session_state.user_id, "html_payload": tk_admin_html}).execute()

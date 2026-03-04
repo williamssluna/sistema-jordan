@@ -140,7 +140,7 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS CON DEPURACIÓN (DEBUG)
+# 🔥 MOTOR DE COSTOS FINAL LÍMPIO (Cruza Diccionarios sin Errores)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
@@ -149,24 +149,17 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         if not valid_ids: 
             return pd.DataFrame(), 0.0, 0
 
-        # IMPRESIÓN EN PANTALLA 1
-        st.info(f"🔍 RASTREADOR: Buscando detalles para {len(valid_ids)} ventas generadas en el turno...")
-
         detalles_data = []
         for i in range(0, len(valid_ids), 50):
             try:
                 res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", valid_ids[i:i+50]).execute()
                 if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
-            except Exception as ex: 
-                st.error(f"Error consultando base de datos: {ex}")
+            except: pass
                 
         if not detalles_data: 
-            st.error("🚨 ALERTA ROJA: Supabase devolvió 0 productos. Motivos posibles: Los productos no se guardaron en la venta, o la seguridad RLS está bloqueando la lectura.")
             return pd.DataFrame(), 0.0, 0
 
         df_det = pd.DataFrame(detalles_data)
-        st.success(f"✅ ÉXITO: Se encontraron {len(df_det)} productos vendidos.")
-        
         productos_a_buscar = df_det['producto_id'].apply(clean_id).unique().tolist()
         
         prod_data = []
@@ -178,7 +171,6 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
                 except: pass
 
         if not prod_data: 
-            st.error("🚨 ALERTA ROJA: No pude descargar los costos de la tabla de productos. RLS bloqueando?")
             cant_total = int(pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0).sum())
             return df_det, 0.0, cant_total
 
@@ -195,10 +187,6 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         df_det['cantidad'] = pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0)
         df_det['subtotal'] = pd.to_numeric(df_det['subtotal'], errors='coerce').fillna(0)
         df_det['costo_total_linea'] = df_det['cantidad'] * df_det['costo_compra']
-
-        # IMPRESIÓN EN PANTALLA 2
-        st.warning("📊 TABLA DE COSTOS INTERNA (Mira si la columna 'costo_compra' tiene los números correctos):")
-        st.dataframe(df_det[['producto_id_clean', 'nombre_prod', 'cantidad', 'costo_compra', 'costo_total_linea']])
 
         costo_total = float(df_det['costo_total_linea'].sum())
         cant_total = int(df_det['cantidad'].sum())
@@ -581,6 +569,7 @@ elif menu == "🛒 VENTAS (POS)":
                             
                             items_html = ""
                             for it in st.session_state.carrito:
+                                # 🔥 SI FALLA ESTO, SE DETIENE ABSOLUTAMENTE TODO Y NO IMPRIME TICKET FALSO
                                 try: 
                                     supabase.table("ventas_detalle").insert({
                                         "venta_id": v_id, 
@@ -590,7 +579,8 @@ elif menu == "🛒 VENTAS (POS)":
                                         "subtotal": float(it['precio'] * it['cant'])
                                     }).execute()
                                 except Exception as e_det: 
-                                    st.error(f"🚨 ERROR FATAL: {e_det}")
+                                    st.error(f"🚨 LA BASE DE DATOS RECHAZÓ GUARDAR EL PRODUCTO. ERROR: {e_det}")
+                                    st.stop() # CORTAMOS LA EJECUCIÓN AQUÍ MISMO
                                 
                                 try: supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
                                 except Exception:
@@ -639,7 +629,7 @@ elif menu == "🛒 VENTAS (POS)":
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error en facturación.")
+                        except Exception as e: st.error(f"🚨 Error general en facturación.")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 

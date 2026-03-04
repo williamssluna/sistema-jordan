@@ -140,30 +140,33 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS INFALIBLE (MAPEO POR DICCIONARIO)
+# 🔥 MOTOR DE COSTOS CON DEPURACIÓN (DEBUG)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
     try:
-        # Extraer los IDs de las ventas del turno
         valid_ids = df_cab['id'].dropna().astype(str).tolist()
         if not valid_ids: 
             return pd.DataFrame(), 0.0, 0
 
-        # 1. Recuperamos TODOS los detalles de las ventas (En lotes para evitar bloqueos)
+        # IMPRESIÓN EN PANTALLA 1
+        st.info(f"🔍 RASTREADOR: Buscando detalles para {len(valid_ids)} ventas generadas en el turno...")
+
         detalles_data = []
         for i in range(0, len(valid_ids), 50):
             try:
                 res = supabase_client.table("ventas_detalle").select("venta_id, producto_id, cantidad, subtotal").in_("venta_id", valid_ids[i:i+50]).execute()
                 if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
-            except: pass
+            except Exception as ex: 
+                st.error(f"Error consultando base de datos: {ex}")
                 
         if not detalles_data: 
+            st.error("🚨 ALERTA ROJA: Supabase devolvió 0 productos. Motivos posibles: Los productos no se guardaron en la venta, o la seguridad RLS está bloqueando la lectura.")
             return pd.DataFrame(), 0.0, 0
 
         df_det = pd.DataFrame(detalles_data)
+        st.success(f"✅ ÉXITO: Se encontraron {len(df_det)} productos vendidos.")
         
-        # 2. Descargamos el catálogo de productos para ver cuánto costó cada cosa
         productos_a_buscar = df_det['producto_id'].apply(clean_id).unique().tolist()
         
         prod_data = []
@@ -175,28 +178,27 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
                 except: pass
 
         if not prod_data: 
+            st.error("🚨 ALERTA ROJA: No pude descargar los costos de la tabla de productos. RLS bloqueando?")
             cant_total = int(pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0).sum())
             return df_det, 0.0, cant_total
 
-        # 3. EL MAPEO EXACTO (Cruza Códigos sin fallar)
         df_prod = pd.DataFrame(prod_data)
         df_prod['codigo_barras_clean'] = df_prod['codigo_barras'].apply(clean_id)
         
-        # Crea un diccionario de memoria: ej. {'7751731004418': 100.00}
         costo_dict = dict(zip(df_prod['codigo_barras_clean'], pd.to_numeric(df_prod['costo_compra'], errors='coerce').fillna(0.0)))
         nombre_dict = dict(zip(df_prod['codigo_barras_clean'], df_prod['nombre']))
 
         df_det['producto_id_clean'] = df_det['producto_id'].apply(clean_id)
-        
-        # Inyecta el costo y el nombre a los detalles vendidos
         df_det['costo_compra'] = df_det['producto_id_clean'].map(costo_dict).fillna(0.0)
         df_det['nombre_prod'] = df_det['producto_id_clean'].map(nombre_dict).fillna("Desconocido")
 
         df_det['cantidad'] = pd.to_numeric(df_det['cantidad'], errors='coerce').fillna(0)
         df_det['subtotal'] = pd.to_numeric(df_det['subtotal'], errors='coerce').fillna(0)
-        
-        # 4. Cálculo final multiplicando Cantidad x Costo de Compra
         df_det['costo_total_linea'] = df_det['cantidad'] * df_det['costo_compra']
+
+        # IMPRESIÓN EN PANTALLA 2
+        st.warning("📊 TABLA DE COSTOS INTERNA (Mira si la columna 'costo_compra' tiene los números correctos):")
+        st.dataframe(df_det[['producto_id_clean', 'nombre_prod', 'cantidad', 'costo_compra', 'costo_total_linea']])
 
         costo_total = float(df_det['costo_total_linea'].sum())
         cant_total = int(df_det['cantidad'].sum())
@@ -579,7 +581,6 @@ elif menu == "🛒 VENTAS (POS)":
                             
                             items_html = ""
                             for it in st.session_state.carrito:
-                                # AHORA GUARDARÁ EL PRODUCTO SIN FALLAR
                                 try: 
                                     supabase.table("ventas_detalle").insert({
                                         "venta_id": v_id, 
@@ -638,7 +639,7 @@ elif menu == "🛒 VENTAS (POS)":
                             st.session_state.print_trigger = True
                             st.session_state.carrito = []
                             st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error en facturación. Toma captura si persiste.")
+                        except Exception as e: st.error(f"🚨 Error en facturación.")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -980,7 +981,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
 # ==========================================
 # ⚠️ MÓDULO 6: MERMAS 
 # ==========================================
-elif menu == "⚠️ MERMAS/DAÑOS" and ("mermas" in st.session_state.user_perms or st.session_state.is_admin):
+elif menu == "⚠️ MERMAS" and ("mermas" in st.session_state.user_perms or st.session_state.is_admin):
     st.markdown('<div class="main-header">Registro de Mermas (Bajas)</div>', unsafe_allow_html=True)
     st.markdown('<div class="css-card">', unsafe_allow_html=True)
     col_m1, col_m2 = st.columns(2)
@@ -1235,43 +1236,42 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
         tk = st.session_state.ticket_cierre
         st.success("✅ Reporte Z Generado Correctamente.")
         
-        # TICKET HTML LIMPIO Y SIN SANGRÍAS
         if es_gerencia:
             financiero_html = (
-"<b>📉 INVERSIÓN Y UTILIDAD:</b><br>" +
-f"Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>" +
-f"Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>" +
-f"<b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>" +
-"--------------------------------<br>"
+                "<b>📉 INVERSIÓN Y UTILIDAD:</b><br>" +
+                f"Costo Mercadería (Inversión): S/. {tk['capital_inv']:.2f}<br>" +
+                f"Gastos/Mermas/Dev: S/. {tk['tot_gastos'] + tk['tot_merma'] + tk['tot_dev']:.2f}<br>" +
+                f"<b>UTILIDAD NETA (Ganancia): S/. {tk['utilidad']:.2f}</b><br>" +
+                "--------------------------------<br>"
             )
         else:
             financiero_html = (
-"<b>📉 SALIDAS DE CAJA:</b><br>" +
-f"Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>" +
-f"Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>" +
-"--------------------------------<br>"
+                "<b>📉 SALIDAS DE CAJA:</b><br>" +
+                f"Gastos Operativos: S/. {tk['tot_gastos']:.2f}<br>" +
+                f"Devoluciones/Mermas: S/. {tk['tot_dev'] + tk['tot_merma']:.2f}<br>" +
+                "--------------------------------<br>"
             )
 
         ticket_cajero_html = (
-"<div class='ticket-termico'>" +
-"<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>" +
-"--------------------------------<br>" +
-f"FECHA CIERRE: {tk['fecha']}<br>" +
-f"CAJERO RESP: {st.session_state.user_name}<br>" +
-"--------------------------------<br>" +
-f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>" +
-f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>" +
-f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>" +
-f"Volumen Venta: {tk['cant_vendida']} items.<br>" +
-"--------------------------------<br>" +
-f"{financiero_html}" +
-f"{tk.get('personal_html', '')}" +
-"<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
-f"EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>" +
-f"PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>" +
-"--------------------------------<br>" +
-f"{tk.get('alertas_stock', '')}" +
-"</div>"
+            "<div class='ticket-termico'>" +
+            "<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CIERRE TURNO)</b></center>" +
+            "--------------------------------<br>" +
+            f"FECHA CIERRE: {tk['fecha']}<br>" +
+            f"CAJERO RESP: {st.session_state.user_name}<br>" +
+            "--------------------------------<br>" +
+            f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>" +
+            f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>" +
+            f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>" +
+            f"Volumen Venta: {tk['cant_vendida']} items.<br>" +
+            "--------------------------------<br>" +
+            financiero_html + 
+            tk.get('personal_html', '') + 
+            "<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
+            f"EFECTIVO A ENTREGAR: S/. {tk['caja_efectivo']:.2f}<br>" +
+            f"PAGOS VIRTUALES (Yape/Plin/Tarj): S/. {tk['ventas_digital']:.2f}<br>" +
+            "--------------------------------<br>" +
+            tk.get('alertas_stock', '') +
+            "</div>"
         )
 
         st.markdown(ticket_cajero_html, unsafe_allow_html=True)
@@ -1422,32 +1422,32 @@ f"{tk.get('alertas_stock', '')}" +
                                 tk_z_num = f"Z-{int(time.time())}"
                                 
                                 tk_admin_html = (
-"<div class='ticket-termico'>" +
-"<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>" +
-"--------------------------------<br>" +
-f"FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>" +
-f"CAJERO: {st.session_state.user_name}<br>" +
-"--------------------------------<br>" +
-f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>" +
-f"- Efectivo: S/. {v_efe:.2f}<br>" +
-f"- Digital: S/. {v_dig:.2f}<br>" +
-f"Volumen: {c_ven} items.<br>" +
-"--------------------------------<br>" +
-"<b>📉 INVERSIÓN Y COSTOS:</b><br>" +
-f"Costo Mercadería: S/. {tot_costo:.2f}<br>" +
-f"Gastos Caja: S/. {tot_gst:.2f}<br>" +
-f"Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>" +
-"--------------------------------<br>" +
-"<b>📊 RENDIMIENTO NETO:</b><br>" +
-f"Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>" +
-f"<b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>" +
-"--------------------------------<br>" +
-f"{personal_html}" +
-"<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
-f"EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>" +
-f"PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>" +
-"--------------------------------<br>" +
-"</div>"
+                                    "<div class='ticket-termico'>" +
+                                    "<center><b>ACCESORIOS JORDAN</b><br><b>REPORTE Z (CONFIDENCIAL ADMIN)</b></center>" +
+                                    "--------------------------------<br>" +
+                                    f"FECHA CIERRE: {st.session_state.ticket_cierre['fecha']}<br>" +
+                                    f"CAJERO: {st.session_state.user_name}<br>" +
+                                    "--------------------------------<br>" +
+                                    f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>" +
+                                    f"- Efectivo: S/. {v_efe:.2f}<br>" +
+                                    f"- Digital: S/. {v_dig:.2f}<br>" +
+                                    f"Volumen: {c_ven} items.<br>" +
+                                    "--------------------------------<br>" +
+                                    "<b>📉 INVERSIÓN Y COSTOS:</b><br>" +
+                                    f"Costo Mercadería: S/. {tot_costo:.2f}<br>" +
+                                    f"Gastos Caja: S/. {tot_gst:.2f}<br>" +
+                                    f"Mermas/Devoluciones: S/. {tot_merma + tot_dev:.2f}<br>" +
+                                    "--------------------------------<br>" +
+                                    "<b>📊 RENDIMIENTO NETO:</b><br>" +
+                                    f"Ganancia Bruta: S/. {ganancia_bruta:.2f}<br>" +
+                                    f"<b>UTILIDAD NETA: S/. {ganancia_neta:.2f}</b><br>" +
+                                    "--------------------------------<br>" +
+                                    f"{personal_html}" +
+                                    "<b>🏦 RENDICIÓN DE CAJA:</b><br>" +
+                                    f"EFECTIVO A ENTREGAR: S/. {caja_efectivo:.2f}<br>" +
+                                    f"PAGOS VIRTUALES (Yape/Plin): S/. {v_dig:.2f}<br>" +
+                                    "--------------------------------<br>" +
+                                    "</div>"
                                 )
                                 
                                 try: supabase.table("ticket_historial").insert({"ticket_numero": tk_z_num, "usuario_id": st.session_state.user_id, "html_payload": tk_admin_html}).execute()

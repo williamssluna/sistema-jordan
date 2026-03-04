@@ -140,14 +140,12 @@ def clean_id(val):
         return v_str
     except: return str(val).strip()
 
-# 🔥 MOTOR DE COSTOS FINAL LÍMPIO (Cruza Diccionarios sin Errores)
 def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
     if df_cab is None or df_cab.empty: 
         return pd.DataFrame(), 0.0, 0
     try:
         valid_ids = df_cab['id'].dropna().astype(str).tolist()
-        if not valid_ids: 
-            return pd.DataFrame(), 0.0, 0
+        if not valid_ids: return pd.DataFrame(), 0.0, 0
 
         detalles_data = []
         for i in range(0, len(valid_ids), 50):
@@ -156,8 +154,7 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
                 if hasattr(res, 'data') and res.data: detalles_data.extend(res.data)
             except: pass
                 
-        if not detalles_data: 
-            return pd.DataFrame(), 0.0, 0
+        if not detalles_data: return pd.DataFrame(), 0.0, 0
 
         df_det = pd.DataFrame(detalles_data)
         productos_a_buscar = df_det['producto_id'].apply(clean_id).unique().tolist()
@@ -197,6 +194,7 @@ def obtener_costo_y_detalles_optimizado(df_cab, supabase_client):
         return pd.DataFrame(), 0.0, 0
 
 def procesar_codigo_venta(code):
+    st.session_state.last_ticket_html = None # Reseteo automático de pantalla
     try:
         prod = supabase.table("productos").select("*").eq("codigo_barras", code).execute()
         if prod.data:
@@ -363,16 +361,17 @@ if menu == "📈 DASHBOARD GENERAL":
 
             if es_gerencia:
                 st.divider()
-                st.write("#### 🚨 Alertas Operativas")
+                st.write("#### 🚨 Alertas Operativas (Bajo Mínimo)")
                 p_db = supabase.table("productos").select("nombre, stock_actual, stock_minimo").execute()
                 if p_db.data:
                     df_p = pd.DataFrame(p_db.data)
-                    df_criticos = df_p[df_p['stock_actual'] <= 20].sort_values(by='stock_actual')
+                    df_p['stock_minimo'] = pd.to_numeric(df_p['stock_minimo'], errors='coerce').fillna(5)
+                    df_criticos = df_p[df_p['stock_actual'] <= df_p['stock_minimo']].sort_values(by='stock_actual')
                     if not df_criticos.empty:
-                        st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos con 20 unidades o menos.")
-                        with st.expander("Ver lista de productos a comprar"):
-                            st.dataframe(df_criticos[['nombre', 'stock_actual']].rename(columns={'nombre':'Producto', 'stock_actual': 'Stock Restante'}), hide_index=True)
-                    else: st.success("Todo el inventario supera las 20 unidades.")
+                        st.warning(f"⚠️ Atención: Tienes {len(df_criticos)} productos por debajo de su límite de stock configurado.")
+                        with st.expander("Ver lista de productos a reabastecer"):
+                            st.dataframe(df_criticos[['nombre', 'stock_actual', 'stock_minimo']].rename(columns={'nombre':'Producto', 'stock_actual': 'Stock Actual', 'stock_minimo': 'Límite Alerta'}), hide_index=True)
+                    else: st.success("Todo el inventario está en niveles óptimos.")
 
                 st.divider()
                 st.write("#### 📈 Evolución Comercial (Últimos 7 Días)")
@@ -415,16 +414,10 @@ if menu == "📈 DASHBOARD GENERAL":
 # ==========================================
 elif menu == "🛒 VENTAS (POS)":
     
-    if st.session_state.last_ticket_html:
-        st.success("✅ Venta procesada exitosamente. Ticket generado:")
-        html_visible = st.session_state.last_ticket_html.replace("<script>window.onload=function(){window.print();}</script>", "")
-        st.markdown(html_visible, unsafe_allow_html=True)
-        if st.session_state.print_trigger:
-            components.html(st.session_state.last_ticket_html, height=0)
-            st.session_state.print_trigger = False
-        if st.button("🧹 Atender Siguiente Cliente", type="primary"):
-            st.session_state.last_ticket_html = None
-            st.rerun()
+    if st.session_state.last_ticket_html and st.session_state.print_trigger:
+        st.toast("✅ Venta exitosa. El ticket se está imprimiendo...", icon="🖨️")
+        components.html(st.session_state.last_ticket_html, height=0)
+        st.session_state.print_trigger = False
 
     col_v1, col_v2 = st.columns([1.3, 1.7])
     
@@ -454,11 +447,16 @@ elif menu == "🛒 VENTAS (POS)":
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
         st.write("#### 🛍️ Carrito de Compras")
         if not st.session_state.carrito: 
-            st.info("El carrito está vacío.")
+            st.info("El carrito está vacío. Escanea un producto para comenzar.")
+            if st.session_state.last_ticket_html and not st.session_state.print_trigger:
+                with st.expander("🧾 Ver copia del último ticket impreso", expanded=False):
+                    html_visible = st.session_state.last_ticket_html.replace("<script>window.onload=function(){window.print();}</script>", "")
+                    st.markdown(html_visible, unsafe_allow_html=True)
         else:
             total_venta = 0.0
             costo_total = 0.0
             indices_basura = []
+            bloquear_venta = False
             
             st.markdown("<div style='font-size:12px; color:gray; font-weight:bold; display:flex; border-bottom:1px solid #e2e8f0; padding-bottom:5px;'><span style='width:45%;'>Producto</span><span style='width:25%;'>Precio (S/.)</span><span style='width:20%;'>Cant.</span><span style='width:10%;'></span></div>", unsafe_allow_html=True)
             
@@ -466,8 +464,13 @@ elif menu == "🛒 VENTAS (POS)":
                 c1, c2, c3, c4 = st.columns([4.5, 2.5, 2, 1])
                 c1.markdown(f"<div style='padding-top:10px; font-size:14px;'><b>{item['nombre']}</b></div>", unsafe_allow_html=True)
                 
-                nuevo_p = c2.number_input("Precio", min_value=float(item['p_min']), value=float(item['precio']), step=1.0, key=f"p_{i}", label_visibility="collapsed")
+                # SISTEMA DE REGATEO (Sin límite forzado, pero con validación)
+                nuevo_p = c2.number_input("Precio", min_value=0.0, value=float(item['precio']), step=1.0, key=f"p_{i}", label_visibility="collapsed")
                 st.session_state.carrito[i]['precio'] = nuevo_p
+                
+                if nuevo_p < item['p_min']:
+                    c1.error(f"Mínimo S/. {item['p_min']:.2f}")
+                    bloquear_venta = True
                 
                 nueva_c = c3.number_input("Cant.", min_value=1, max_value=int(item['stock_max']), value=int(item['cant']), step=1, key=f"c_{i}", label_visibility="collapsed")
                 st.session_state.carrito[i]['cant'] = nueva_c
@@ -539,97 +542,99 @@ elif menu == "🛒 VENTAS (POS)":
 
                 st.markdown('<div class="btn-checkout">', unsafe_allow_html=True)
                 
-                if st.button("FINALIZAR VENTA E IMPRIMIR", use_container_width=True):
-                    if vendedor_seleccionado == "Seleccionar...": st.error("🛑 Selecciona tu usuario.")
-                    elif pago != "Efectivo" and not ref_pago: st.error("🛑 Ingresa la referencia del pago.")
-                    else:
-                        try:
-                            vendedor_id = vendedor_opciones[vendedor_seleccionado]
-                            t_num = f"AJ-{int(time.time())}"
-                            
-                            datos_insert = {
-                                "ticket_numero": t_num, 
-                                "total_venta": float(total_venta), 
-                                "metodo_pago": pago, 
-                                "tipo_comprobante": "Ticket", 
-                                "usuario_id": vendedor_id, 
-                                "referencia_pago": ref_pago
-                            }
-                            
-                            cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
-                            if cli_id is not None: datos_insert["cliente_id"] = cli_id
-                            
-                            try: 
-                                res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
-                            except Exception:
-                                if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
-                                res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
-
-                            v_id = res_insert.data[0]['id'] 
-                            
-                            items_html = ""
-                            for it in st.session_state.carrito:
-                                # 🔥 SI FALLA ESTO, SE DETIENE ABSOLUTAMENTE TODO Y NO IMPRIME TICKET FALSO
+                if bloquear_venta:
+                    st.error("🛑 Un precio es menor a lo permitido. Corrígelo para poder cobrar.")
+                else:
+                    if st.button("FINALIZAR VENTA E IMPRIMIR", use_container_width=True):
+                        if vendedor_seleccionado == "Seleccionar...": st.error("🛑 Selecciona tu usuario.")
+                        elif pago != "Efectivo" and not ref_pago: st.error("🛑 Ingresa la referencia del pago.")
+                        else:
+                            try:
+                                vendedor_id = vendedor_opciones[vendedor_seleccionado]
+                                t_num = f"AJ-{int(time.time())}"
+                                
+                                datos_insert = {
+                                    "ticket_numero": t_num, 
+                                    "total_venta": float(total_venta), 
+                                    "metodo_pago": pago, 
+                                    "tipo_comprobante": "Ticket", 
+                                    "usuario_id": vendedor_id, 
+                                    "referencia_pago": ref_pago
+                                }
+                                
+                                cli_id = cliente_dict.get(cliente_sel, None) if cliente_sel != "Público General (Sin registrar)" else None
+                                if cli_id is not None: datos_insert["cliente_id"] = cli_id
+                                
                                 try: 
-                                    supabase.table("ventas_detalle").insert({
-                                        "venta_id": v_id, 
-                                        "producto_id": str(it['id']), 
-                                        "cantidad": int(it['cant']), 
-                                        "precio_unitario": float(it['precio']), 
-                                        "subtotal": float(it['precio'] * it['cant'])
-                                    }).execute()
-                                except Exception as e_det: 
-                                    st.error(f"🚨 LA BASE DE DATOS RECHAZÓ GUARDAR EL PRODUCTO. ERROR: {e_det}")
-                                    st.stop() # CORTAMOS LA EJECUCIÓN AQUÍ MISMO
-                                
-                                try: supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
+                                    res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
                                 except Exception:
-                                    try:
-                                        stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
-                                        if stk.data: supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
-                                    except: pass
+                                    if "cliente_id" in datos_insert: del datos_insert["cliente_id"]
+                                    res_insert = supabase.table("ventas_cabecera").insert(datos_insert).execute()
+
+                                v_id = res_insert.data[0]['id'] 
                                 
-                                registrar_kardex(it['id'], vendedor_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
-                                items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
-                            
-                            fecha_tk = get_now().strftime('%d/%m/%Y %I:%M %p')
-                            nom_cliente = cliente_sel.split(' - ')[1] if (cli_id and ' - ' in cliente_sel) else 'General'
-                            
-                            c_base = (
-                                "--------------------------------<br>" +
-                                f"TICKET: {t_num}<br>" +
-                                f"FECHA: {fecha_tk}<br>" +
-                                f"CAJERO: {vendedor_seleccionado}<br>" +
-                                f"CLIENTE: {nom_cliente}<br>" +
-                                "--------------------------------<br>" +
-                                items_html +
-                                "--------------------------------<br>" +
-                                f"<b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>" +
-                                f"MÉTODO: {pago}<br>"
-                            )
-                            
-                            tk_html = (
-                                "<div class='ticket-termico' style='text-align:left;'>" +
-                                "<center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>" +
-                                c_base +
-                                "<center>¡Gracias por su compra!</center>" +
-                                "</div>" +
-                                "<div class='linea-corte'><span>✂️</span></div>" +
-                                "<div class='ticket-termico' style='text-align:left;'>" +
-                                "<center><b>ACCESORIOS JORDAN</b><br>CONTROL INTERNO</center><br>" +
-                                c_base +
-                                "</div>" +
-                                "<script>window.onload=function(){window.print();}</script>"
-                            )
-                            
-                            try: supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": tk_html}).execute()
-                            except: pass
-                            
-                            st.session_state.last_ticket_html = tk_html
-                            st.session_state.print_trigger = True
-                            st.session_state.carrito = []
-                            st.rerun() 
-                        except Exception as e: st.error(f"🚨 Error general en facturación.")
+                                items_html = ""
+                                for it in st.session_state.carrito:
+                                    try: 
+                                        supabase.table("ventas_detalle").insert({
+                                            "venta_id": v_id, 
+                                            "producto_id": str(it['id']), 
+                                            "cantidad": int(it['cant']), 
+                                            "precio_unitario": float(it['precio']), 
+                                            "subtotal": float(it['precio'] * it['cant'])
+                                        }).execute()
+                                    except Exception as e_det: 
+                                        st.error("🚨 Error Guardando Productos. Asegúrate de ejecutar la Vacuna en Supabase (DISABLE TRIGGER).")
+                                        st.stop()
+                                    
+                                    try: supabase.rpc("reducir_stock", {"p_codigo": str(it['id']), "p_cant": int(it['cant'])}).execute()
+                                    except Exception:
+                                        try:
+                                            stk = supabase.table("productos").select("stock_actual").eq("codigo_barras", it['id']).execute()
+                                            if stk.data: supabase.table("productos").update({"stock_actual": stk.data[0]['stock_actual'] - it['cant']}).eq("codigo_barras", it['id']).execute()
+                                        except: pass
+                                    
+                                    registrar_kardex(it['id'], vendedor_id, "SALIDA_VENTA", it['cant'], f"Ticket {t_num}")
+                                    items_html += f"{it['nombre'][:20]} <br> {it['cant']} x S/. {it['precio']:.2f} = S/. {it['precio']*it['cant']:.2f}<br>"
+                                
+                                fecha_tk = get_now().strftime('%d/%m/%Y %I:%M %p')
+                                nom_cliente = cliente_sel.split(' - ')[1] if (cli_id and ' - ' in cliente_sel) else 'General'
+                                
+                                c_base = (
+                                    "--------------------------------<br>" +
+                                    f"TICKET: {t_num}<br>" +
+                                    f"FECHA: {fecha_tk}<br>" +
+                                    f"CAJERO: {vendedor_seleccionado}<br>" +
+                                    f"CLIENTE: {nom_cliente}<br>" +
+                                    "--------------------------------<br>" +
+                                    items_html +
+                                    "--------------------------------<br>" +
+                                    f"<b>TOTAL PAGADO: S/. {total_venta:.2f}</b><br>" +
+                                    f"MÉTODO: {pago}<br>"
+                                )
+                                
+                                tk_html = (
+                                    "<div class='ticket-termico' style='text-align:left;'>" +
+                                    "<center><b>ACCESORIOS JORDAN</b><br>COPIA CLIENTE</center><br>" +
+                                    c_base +
+                                    "<center>¡Gracias por su compra!</center>" +
+                                    "</div>" +
+                                    "<div class='linea-corte'><span>✂️</span></div>" +
+                                    "<div class='ticket-termico' style='text-align:left;'>" +
+                                    "<center><b>ACCESORIOS JORDAN</b><br>CONTROL INTERNO</center><br>" +
+                                    c_base +
+                                    "</div>" +
+                                    "<script>window.onload=function(){window.print();}</script>"
+                                )
+                                
+                                try: supabase.table("ticket_historial").insert({"ticket_numero": t_num, "usuario_id": vendedor_id, "html_payload": tk_html}).execute()
+                                except: pass
+                                
+                                st.session_state.last_ticket_html = tk_html
+                                st.session_state.print_trigger = True
+                                st.session_state.carrito = []
+                                st.rerun() 
+                            except Exception as e: st.error(f"🚨 Error en facturación. Toma captura si persiste.")
                 st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -835,6 +840,7 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                 
                 df['precio_lista'] = pd.to_numeric(df['precio_lista'], errors='coerce').fillna(0)
                 df['costo_compra'] = pd.to_numeric(df['costo_compra'], errors='coerce').fillna(0)
+                df['stock_minimo'] = pd.to_numeric(df['stock_minimo'], errors='coerce').fillna(5)
 
                 columnas_mostrar = ['codigo_barras', 'nombre', 'Categoría', 'Marca', 'precio_lista', 'stock_actual', 'stock_minimo']
                 
@@ -847,8 +853,6 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                 df_show['precio_lista'] = df_show['precio_lista'].apply(lambda x: f"{float(x):.2f}")
                 if 'costo_compra' in df_show.columns:
                     df_show['costo_compra'] = df_show['costo_compra'].apply(lambda x: f"{float(x):.2f}")
-
-                if 'stock_minimo' not in df_show.columns: df_show['stock_minimo'] = 5
                 
                 def highlight_stock(row):
                     if row['stock_actual'] <= row['stock_minimo']: return ['background-color: #fef2f2; color: #dc2626'] * len(row)
@@ -858,28 +862,42 @@ elif menu == "📦 ALMACÉN Y COMPRAS" and ("inventario_ver" in st.session_state
                 
                 if "inventario_modificar" in st.session_state.user_perms or st.session_state.is_admin:
                     st.divider()
-                    st.write("#### ⚡ Reabastecimiento / Ajuste de Stock")
-                    with st.form("form_add_stock"):
-                        col_r1, col_r2 = st.columns([3, 1])
-                        sel_p = col_r1.selectbox("Producto a modificar:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
-                        add_qty = col_r2.number_input("Cantidad entrante/saliente (Usa - para restar)", step=1, value=0)
-                        motivo_auditoria = st.text_input("Motivo del Ajuste (Ej. 'Factura 001' o 'Conteo Físico') - OBLIGATORIO")
-                        
-                        if st.form_submit_button("💾 Ejecutar Ajuste Físico", type="primary"):
-                            if sel_p != "..." and add_qty != 0:
-                                if not motivo_auditoria.strip():
-                                    st.error("🛑 AUDITORÍA: Debes ingresar el motivo para alterar el stock manualmente.")
-                                else:
-                                    c_up = sel_p.split(" - ")[0]
+                    col_r1, col_r2 = st.columns(2)
+                    with col_r1:
+                        st.write("#### ⚡ Reabastecimiento / Ajuste de Stock")
+                        with st.form("form_add_stock"):
+                            sel_p = st.selectbox("Producto a modificar:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
+                            add_qty = st.number_input("Cantidad entrante/saliente (Usa - para restar)", step=1, value=0)
+                            motivo_auditoria = st.text_input("Motivo del Ajuste (Ej. 'Factura 001' o 'Conteo Físico') - OBLIGATORIO")
+                            
+                            if st.form_submit_button("💾 Ejecutar Ajuste Físico", type="primary"):
+                                if sel_p != "..." and add_qty != 0:
+                                    if not motivo_auditoria.strip():
+                                        st.error("🛑 AUDITORÍA: Debes ingresar el motivo.")
+                                    else:
+                                        c_up = sel_p.split(" - ")[0]
+                                        try:
+                                            if add_qty > 0: supabase.rpc("aumentar_stock", {"p_codigo": c_up, "p_cant": add_qty}).execute()
+                                            else: supabase.rpc("reducir_stock", {"p_codigo": c_up, "p_cant": abs(add_qty)}).execute()
+                                            
+                                            tipo_mov = "INGRESO_MANUAL" if add_qty > 0 else "SALIDA_MANUAL"
+                                            registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
+                                            st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
+                                        except Exception:
+                                            st.error(f"Falla crítica: Base de datos denegó operación.")
+                    
+                    with col_r2:
+                        st.write("#### 🔔 Configurar Alertas por Producto")
+                        with st.form("form_alerta_minima"):
+                            sel_p_min = st.selectbox("Elegir producto para cambiar alerta:", ["..."] + [f"{r['codigo_barras']} - {r['nombre']}" for _, r in df.iterrows()])
+                            nuevo_min = st.number_input("Avisar cuando queden solo:", min_value=0, step=1, value=5)
+                            if st.form_submit_button("💾 Actualizar Límite de Alerta"):
+                                if sel_p_min != "...":
+                                    c_up_min = sel_p_min.split(" - ")[0]
                                     try:
-                                        if add_qty > 0: supabase.rpc("aumentar_stock", {"p_codigo": c_up, "p_cant": add_qty}).execute()
-                                        else: supabase.rpc("reducir_stock", {"p_codigo": c_up, "p_cant": abs(add_qty)}).execute()
-                                        
-                                        tipo_mov = "INGRESO_MANUAL" if add_qty > 0 else "SALIDA_MANUAL"
-                                        registrar_kardex(c_up, st.session_state.user_id, tipo_mov, abs(add_qty), f"Ajuste: {motivo_auditoria}")
-                                        st.success(f"✅ Stock actualizado."); time.sleep(1.5); st.rerun()
-                                    except Exception:
-                                        st.error(f"Falla crítica: Base de datos denegó operación.")
+                                        supabase.table("productos").update({"stock_minimo": nuevo_min}).eq("codigo_barras", c_up_min).execute()
+                                        st.success("✅ Alerta actualizada."); time.sleep(1); st.rerun()
+                                    except Exception: st.error("Error actualizando alerta.")
         except Exception: st.error(f"Error cargando inventario.")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1224,7 +1242,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
     
     if st.session_state.ticket_cierre:
         tk = st.session_state.ticket_cierre
-        st.success("✅ Reporte Z Generado Correctamente.")
+        st.success("✅ Reporte Z Generado. El nuevo turno ya está corriendo automáticamente.")
         
         if es_gerencia:
             financiero_html = (
@@ -1252,7 +1270,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
             f"<b>💰 INGRESOS BRUTOS: S/. {tk['tot_ventas']:.2f}</b><br>" +
             f"- En Efectivo: S/. {tk['ventas_efectivo']:.2f}<br>" +
             f"- En Digital: S/. {tk['ventas_digital']:.2f}<br>" +
-            f"Volumen Venta: {tk['cant_vendida']} items.<br>" +
+            f"Cantidad Total de Productos Vendidos: {tk['cant_vendida']} unidades.<br>" +
             "--------------------------------<br>" +
             financiero_html + 
             tk.get('personal_html', '') + 
@@ -1265,7 +1283,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
         )
 
         st.markdown(ticket_cajero_html, unsafe_allow_html=True)
-        if st.button("🧹 Iniciar Nuevo Turno Operativo", type="primary"):
+        if st.button("👁️ Ocultar Vista de Ticket Z"):
             st.session_state.ticket_cierre = None
             st.rerun()
     else:
@@ -1334,6 +1352,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                 caja_efectivo = v_efe - tot_gst - tot_dev 
                 
                 st.write("**1. Ingresos y Dinero Físico**")
+                st.caption(f"Cantidad Total de Productos Vendidos: **{c_ven} unidades**")
                 c1, c2, c3 = st.columns(3)
                 c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ventas Totales Brutas</div><div class='metric-value metric-blue'>S/.{tot_v:.2f}</div></div>", unsafe_allow_html=True)
                 c2.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Efectivo (Caja)</div><div class='metric-value'>S/.{v_efe:.2f}</div></div>", unsafe_allow_html=True)
@@ -1394,12 +1413,18 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                             personal_html += f"- {nombres_usuarios[uid]}: {hrs:.1f} Hrs<br>"
                                         personal_html += "--------------------------------<br>"
 
-                                bajos = supabase.table("productos").select("nombre, stock_actual").lte("stock_actual", 20).execute()
+                                bajos = supabase.table("productos").select("nombre, stock_actual, stock_minimo").execute()
                                 alert_html = ""
                                 if bajos.data:
-                                    alert_html = "<b>⚠️ COMPRAS SUGERIDAS (STOCK BAJO):</b><br>"
-                                    for b in bajos.data: alert_html += f"- {b['nombre']}: {b['stock_actual']} ud<br>"
-                                    alert_html += "--------------------------------<br>"
+                                    df_b = pd.DataFrame(bajos.data)
+                                    df_b['stock_minimo'] = pd.to_numeric(df_b['stock_minimo'], errors='coerce').fillna(5)
+                                    df_b_crit = df_b[df_b['stock_actual'] <= df_b['stock_minimo']]
+                                    
+                                    if not df_b_crit.empty:
+                                        alert_html = f"<b>⚠️ COMPRAS SUGERIDAS ({len(df_b_crit)} items bajaron del límite):</b><br>"
+                                        for _, b in df_b_crit.iterrows(): 
+                                            alert_html += f"- {b['nombre']}: {b['stock_actual']} ud (Límite: {b['stock_minimo']})<br>"
+                                        alert_html += "--------------------------------<br>"
                                     
                                 st.session_state.ticket_cierre = {
                                     'fecha': get_now().strftime('%d/%m/%Y %I:%M %p'),
@@ -1421,7 +1446,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                                     f"<b>💰 INGRESOS BRUTOS: S/. {tot_v:.2f}</b><br>" +
                                     f"- Efectivo: S/. {v_efe:.2f}<br>" +
                                     f"- Digital: S/. {v_dig:.2f}<br>" +
-                                    f"Volumen: {c_ven} items.<br>" +
+                                    f"Cantidad de Productos Vendidos: {c_ven} unidades.<br>" +
                                     "--------------------------------<br>" +
                                     "<b>📉 INVERSIÓN Y COSTOS:</b><br>" +
                                     f"Costo Mercadería: S/. {tot_costo:.2f}<br>" +
@@ -1496,7 +1521,7 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                         else: r_merma = 0.0
                     except: r_merma = 0.0
                     
-                    r_v_tot, r_v_efe, r_v_dig, r_costo = 0.0, 0.0, 0.0, 0.0
+                    r_v_tot, r_v_efe, r_v_dig, r_costo, r_c_ven = 0.0, 0.0, 0.0, 0.0, 0
                     
                     if cab_all.data:
                         df_c_dia = pd.DataFrame(cab_all.data)
@@ -1504,17 +1529,31 @@ elif menu == "📊 REPORTES Y CIERRE" and ("cierre_caja" in st.session_state.use
                             r_v_efe = df_c_dia[df_c_dia['metodo_pago'] == 'Efectivo']['total_venta'].sum()
                             r_v_dig = df_c_dia[df_c_dia['metodo_pago'] != 'Efectivo']['total_venta'].sum()
                             r_v_tot = r_v_efe + r_v_dig
-                            _df_hist_det, r_costo, _ = obtener_costo_y_detalles_optimizado(df_c_dia, supabase)
+                            _df_hist_det, r_costo, r_c_ven = obtener_costo_y_detalles_optimizado(df_c_dia, supabase)
 
-                    r_g_neta = r_v_tot - r_costo - r_gst - r_dev - r_merma
+                    r_g_bruta = r_v_tot - r_costo
+                    r_g_neta = r_g_bruta - r_gst - r_dev - r_merma
+                    r_caja_efectivo = r_v_efe - r_gst - r_dev
                     
                     if r_v_tot > 0 or r_gst > 0:
-                        st.write("**Resumen de Flujo de Caja**")
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingresos Brutos</div><div class='metric-value-small metric-blue'>S/.{r_v_tot:.2f}</div></div>", unsafe_allow_html=True)
-                        c2.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Inventario</div><div class='metric-value-small metric-orange'>- S/.{r_costo:.2f}</div></div>", unsafe_allow_html=True)
-                        c3.markdown(f"<div class='metric-box'><div class='metric-title'>Egresos (Gast/Dev)</div><div class='metric-value-small metric-red'>- S/.{r_gst + r_dev + r_merma:.2f}</div></div>", unsafe_allow_html=True)
-                        c4.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value-small metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
+                        st.write("**1. Ingresos y Dinero Físico**")
+                        st.caption(f"Cantidad de Productos Vendidos: **{r_c_ven} unidades**")
+                        c1, c2, c3 = st.columns(3)
+                        c1.markdown(f"<div class='metric-box'><div class='metric-title'>Ingresos Brutos</div><div class='metric-value metric-blue'>S/.{r_v_tot:.2f}</div></div>", unsafe_allow_html=True)
+                        c2.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Efectivo (Caja)</div><div class='metric-value'>S/.{r_v_efe:.2f}</div></div>", unsafe_allow_html=True)
+                        c3.markdown(f"<div class='metric-box'><div class='metric-title'>Pagos Digitales</div><div class='metric-value metric-purple'>S/.{r_v_dig:.2f}</div></div>", unsafe_allow_html=True)
+                        
+                        st.write("**2. Descuentos, Inversión y Fugas**")
+                        c4, c5, c6 = st.columns(3)
+                        c4.markdown(f"<div class='metric-box'><div class='metric-title'>Costo Mercadería</div><div class='metric-value-small metric-orange'>- S/.{r_costo:.2f}</div></div>", unsafe_allow_html=True)
+                        c5.markdown(f"<div class='metric-box'><div class='metric-title'>Gastos Operativos</div><div class='metric-value-small metric-red'>- S/.{r_gst:.2f}</div></div>", unsafe_allow_html=True)
+                        c6.markdown(f"<div class='metric-box'><div class='metric-title'>Devoluciones/Mermas</div><div class='metric-value-small metric-red'>- S/.{r_dev + r_merma:.2f}</div></div>", unsafe_allow_html=True)
+                        
+                        st.write("**3. Resultados del Negocio**")
+                        c7, c8 = st.columns(2)
+                        c7.markdown(f"<div class='metric-box' style='border-left:4px solid #8b5cf6;'><div class='metric-title'>Utilidad Neta Pura</div><div class='metric-value metric-purple'>S/.{r_g_neta:.2f}</div></div>", unsafe_allow_html=True)
+                        c8.markdown(f"<div class='metric-box' style='background: #ecfdf5; border-left:4px solid #10b981;'><div class='metric-title'>Efectivo a Entregar</div><div class='metric-value metric-green'>S/.{r_caja_efectivo:.2f}</div></div>", unsafe_allow_html=True)
+
                     else:
                         st.info("Sin registros contables en este día específico.")
                 except Exception: st.error("Procesando datos históricos...")
